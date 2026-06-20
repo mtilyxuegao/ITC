@@ -59,3 +59,11 @@ ITC / Interaction Model 把"实时交互"做进**模型本身**(200ms 微轮次:
 
 - 全双工(GPU 服务器):`cd minicpm-o-4.5-fullduplex && bash deploy.sh`
 - 非双工(Mac 本地):见 [`livekit-voice-agent/README.md`](./livekit-voice-agent/README.md)
+
+---
+
+## 四、再往后:在小模型后面挂一个"思考"大模型
+
+本目录的 MiniCPM-o 4.5 是实时**全双工小模型(Talker)**。要补上深推理能力,可在它后面**异步挂接一个大"思考"模型(Thinker,如 Qwen3-235B-A22B / DeepSeek-R1,跑在 vLLM/SGLang 上)**,构成 **Talker–Thinker 双脑架构**。其状态管理、跨进程共享状态、回填触发,以及**用户打断时如何让大模型立即停止并作废其结果**,见:
+
+- [`../docs/THINKER_TALKER_zh.md`](../docs/THINKER_TALKER_zh.md) · [English](../docs/THINKER_TALKER.md)
