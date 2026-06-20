@@ -51,6 +51,9 @@ class SGLangThinker:
             "temperature": self.cfg.thinker_temperature,
             "max_tokens": self.cfg.thinker_max_tokens,
             "rid": rid,  # SGLang 透传,便于 /abort_request 精确取消
+            # 关掉思考链:directive 是每 tick 的快速控制决策,长 CoT 既慢又会吃光
+            # max_tokens 导致 content 为空(实测 Qwen3.5)。深推理能力靠 35B 本身,不靠显式 CoT。
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         headers = {"Authorization": f"Bearer {self.cfg.thinker_api_key}"}
         url = self.cfg.thinker_base_url.rstrip("/") + "/chat/completions"

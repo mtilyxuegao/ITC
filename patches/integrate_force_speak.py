@@ -127,9 +127,15 @@ def apply(demo: str) -> None:
         shutil.copy(sp, sp + ".tt.bak")
         print(f"[backup] {sp}.tt.bak")
     src = src.replace(DISPATCH_ANCHOR, DISPATCH_REPLACEMENT, 1)
-    src = src.rstrip("\n") + "\n" + APPEND_BLOCK
+    # 必须插在 def main() 之前:server.py 以 `if __name__ == "__main__": main()` 结尾,
+    # main() 启动 uvicorn 会阻塞,EOF 之后的定义永远不会在 import 时执行。
+    main_anchor = "\ndef main() -> None:\n"
+    if main_anchor in src:
+        src = src.replace(main_anchor, "\n" + APPEND_BLOCK.strip("\n") + "\n\n" + main_anchor, 1)
+    else:
+        src = src.rstrip("\n") + "\n" + APPEND_BLOCK  # 回退(不应发生)
     open(sp, "w", encoding="utf-8").write(src)
-    print("[server.py] 集成完成(分发分支 + 处理函数)")
+    print("[server.py] 集成完成(分发分支 + 处理函数,插在 main() 之前)")
     print("\n✅ 完成。让改动生效:重建 worker 镜像或挂载改动文件(见 patches/README.md)。")
 
 

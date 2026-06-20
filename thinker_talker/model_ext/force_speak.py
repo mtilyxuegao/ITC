@@ -153,22 +153,33 @@ def backend_force_speak(self, text: str):
     return duplex_view.force_speak(text)
 
 
-def _find_model_class():
-    """找到定义了 streaming_generate 的模型类(force_speak 要挂到它上面)。"""
+def _find_duplex_capability_class():
+    """定义了 streaming_generate 的类(真正的实现挂这里:DuplexCapability)。"""
     from MiniCPMO45 import modeling_minicpmo_unified as M
     import inspect
     for _name, obj in inspect.getmembers(M, inspect.isclass):
         if obj.__module__ == M.__name__ and hasattr(obj, "streaming_generate"):
             return obj
-    raise RuntimeError("找不到定义 streaming_generate 的模型类")
+    raise RuntimeError("找不到定义 streaming_generate 的类(DuplexCapability)")
+
+
+def model_force_speak(self, text: str, **kw):
+    """挂到 MiniCPMO(DuplexView._model 的真身)。委托给 self.duplex,
+    镜像 MiniCPMO.duplex_generate → self.duplex.streaming_generate 的委托方式。"""
+    if getattr(self, "duplex", None) is None:
+        raise RuntimeError("duplex 尚未初始化(需先 session.init/prepare)")
+    return self.duplex.duplex_force_speak(text, **kw)
 
 
 def install() -> None:
-    """把三层 force_speak 方法挂上去。幂等。"""
-    model_cls = _find_model_class()
-    if getattr(model_cls, "_tt_force_speak_installed", False):
+    """把 force_speak 挂到 DuplexCapability(实现)+ MiniCPMO(委托)+ DuplexView + PyTorchBackend。幂等。"""
+    cap_cls = _find_duplex_capability_class()
+    if getattr(cap_cls, "_tt_force_speak_installed", False):
         return
-    model_cls.duplex_force_speak = duplex_force_speak
+    cap_cls.duplex_force_speak = duplex_force_speak           # 真正实现
+
+    from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
+    MiniCPMO.duplex_force_speak = model_force_speak           # 委托给 self.duplex
 
     from core.processors.unified import DuplexView
     DuplexView.force_speak = duplexview_force_speak
@@ -176,5 +187,6 @@ def install() -> None:
     from core.processors.pytorch_backend import PyTorchBackend
     PyTorchBackend.duplex_force_speak = backend_force_speak
 
-    model_cls._tt_force_speak_installed = True
-    logger.info("force_speak installed on %s / DuplexView / PyTorchBackend", model_cls.__name__)
+    cap_cls._tt_force_speak_installed = True
+    logger.info("force_speak installed on %s(impl) / MiniCPMO(delegate) / DuplexView / PyTorchBackend",
+                cap_cls.__name__)
