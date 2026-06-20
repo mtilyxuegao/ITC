@@ -1,0 +1,368 @@
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.0.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+0.00.228.316 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.01.117.368 W llama_context: n_ctx_seq (4096) < n_ctx_train (40960) -- the full capacity of the model will not be utilized
+0.01.204.707 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+vision_model_loader: model name:   
+vision_model_loader: description:  image encoder for MiniCPM-V
+vision_model_loader: GGUF version: 3
+vision_model_loader: alignment:    32
+vision_model_loader: n_tensors:    455
+vision_model_loader: n_kv:         20
+
+vision_ctx: vision using CUDA0 backend
+load_hparams: model_type:         0
+load_hparams: n_embd:             1152
+load_hparams: n_head:             16
+load_hparams: n_ff:               4304
+load_hparams: n_layer:            27
+load_hparams: ffn_op:             gelu
+load_hparams: projection_dim:     0
+
+--- vision hparams ---
+load_hparams: image_size:         448
+load_hparams: patch_size:         14
+load_hparams: minicpmv_version:   100045
+load_hparams: proj_scale_factor:  0
+load_hparams: n_wa_pattern:       0
+load_hparams: insert_layer_id:     0
+
+load_hparams: model size:         1044.36 MiB
+load_hparams: metadata size:      0.16 MiB
+load_tensors: ffn up/down are swapped
+alloc_compute_meta:      CUDA0 compute buffer size =   100.30 MiB
+alloc_compute_meta:        CPU compute buffer size =    18.30 MiB
+vision_set_batch_encode: vision batch encode disabled
+init tts....init t2w....flowGGUFModelLoader: init_backend device=gpu:0, gpu_idx=0, backend=CUDA0
+voc_hg2_model: init_backend device=gpu:0, gpu_idx=0, backend=CUDA0
+audition_audio_preprocess: Decoded audio - sample_rate=16000, n_samples=16000
+audition_get_mel_filters: Retrieved mel filters from model: 80 mel bins x 201 fft bins
+audition_audio_preprocess: Using mel filters - n_mel=80, n_fft=201
+audition_audio_preprocess: Generated 1 mel spectrogram chunk(s)
+audition_audio_preprocess: Mel spectrogram ready - n_len=100, n_mel=80, total_size=8000
+build_whisper: Whisper encoder graph built (projector output, pre-pooling)
+audition_audio_batch_encode: Audio input data - n_step=100, n_mel=80, total_elements=8000
+audition_audio_batch_encode: Before incrementing iter: input_frames=100, n_tokens=50, current_iter=0, current_total=0, new_total=50, max_tokens=1500
+audition_audio_batch_encode: KV cache iter incremented to 1 (total_tokens=50, max_tokens=1500)
+audition_audio_batch_encode: Final output shape: [4096, 10]
+audition_audio_batch_encode: Final output: 10 tokens x 4096 dims
+=== Model Paths ===
+  Base dir:   /models/MiniCPM-o-4_5-gguf
+  LLM:        /models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-F16.gguf [OK]
+  Vision:     /models/MiniCPM-o-4_5-gguf/vision/MiniCPM-o-4_5-vision-F16.gguf [OK]
+  Audio:      /models/MiniCPM-o-4_5-gguf/audio/MiniCPM-o-4_5-audio-F16.gguf [OK]
+  TTS:        /models/MiniCPM-o-4_5-gguf/tts/MiniCPM-o-4_5-tts-F16.gguf [OK]
+  Projector:  /models/MiniCPM-o-4_5-gguf/tts/MiniCPM-o-4_5-projector-F16.gguf [OK]
+===================
+=== Initializing Omni Context ===
+  Media type: 2 (omni: audio+vision)
+  TTS enabled: yes
+  Context size: 4096
+  GPU layers: 99
+  Vision backend: metal
+  Vision batch encode: disabled
+  TTS bin dir: /models/MiniCPM-o-4_5-gguf/tts
+  Ref audio: tools/omni/assets/default_ref_audio/default_ref_audio.wav
+09:43:11.133 === omni_init start
+09:43:11.133 media_type = 2, duplex_mode = 0, base_output_dir = ./tools/omni/output
+09:43:11.133 === omni_init: loading new LLM model
+09:43:12.256 === omni_init: loading TTS model
+09:43:12.256 TTS model: loading with n_gpu_layers=-1
+09:43:12.418 TTS sampler: temp=0.80, top_p=0.85, top_k=25, rep_penalty=1.05
+09:43:12.418 TTS: loading weights from GGUF (emb_code, emb_text, projector_semantic, head_code)...
+09:43:12.794 TTS: head_code shape: dim0=6562, dim1=768, will transpose to [6562, 768]
+09:43:12.804 TTS: head_code loaded, verifying first few values:
+09:43:12.804   head_code_weight[0] = 0.01361084 (expect ~0.01385498)
+09:43:12.804   head_code_weight[1] = -0.01660156 (expect ~-0.01647949)
+09:43:12.804   head_code_weight[768] = 0.04101562 (this is weight[1, 0], expect ~0.04150391)
+09:43:12.828 TTS: weights loaded successfully
+09:43:12.828 Projector: loading from /models/MiniCPM-o-4_5-gguf/tts/MiniCPM-o-4_5-projector-F16.gguf
+09:43:12.830 Projector: loaded successfully
+09:43:12.830 === omni_init: loading APM model
+09:43:12.886 APM: init from /models/MiniCPM-o-4_5-gguf/audio/MiniCPM-o-4_5-audio-F16.gguf
+09:43:12.979 Token2Wav: found models in /models/MiniCPM-o-4_5-gguf/token2wav-gguf
+09:43:12.979 Token2Wav: all model files found, initializing session...
+09:43:12.979 Token2Wav: CUDA detected, vocoder using GPU (gpu:0)
+09:43:12.979 Token2Wav: using prompt_cache from /models/MiniCPM-o-4_5-gguf/token2wav-gguf/prompt_cache.gguf
+09:43:16.855 Token2Wav: initialized successfully
+09:43:16.855 Python T2W: script_dir=./tools/omni/pyt2w, model_dir=./tools/omni/pyt2w/token2wav
+09:43:16.855 Token2Wav: 使用 C++ 实现
+09:43:16.855 === omni_init success: ctx_llama = 0x558e31ccbda0
+=== Running test case ===
+  Audio prefix: tools/omni/assets/test_case/omni_test_case/omni_test_case_
+  Count: 9
+09:43:16.855 stream_prefill: n_past = 0
+ voice_clone_prompt = <|im_start|>system
+模仿音频样本的音色并生成新的内容。
+<|audio_start|>
+ assistant_prompt = <|audio_end|>你的任务是用这种声音模式来当一个助手。请认真、高质量地回复用户的问题。请用高自然度的方式和用户聊天。<|im_end|>
+<|im_start|>user
+
+09:43:16.855 system prompt ref_audio: tools/omni/assets/test_case/omni_test_case/omni_test_case_0000.wav
+09:43:17.915 system prompt ref_audio embedding: n_pos=10
+09:43:17.932 🔒 n_keep 设置为 62 (system prompt tokens)，这部分永远不会被滑动窗口删除
+09:43:17.932 stream_prefill(index=0): system prompt 初始化完成，ref_audio 已在其中 prefill
+09:43:17.932 [SW] system_prompt registered: preserve_length=62 (will be protected from sliding)
+09:43:17.932 n_past = 62
+09:43:17.932 
+
+c++ finish stream_prefill(index=0). n_past=62, n_keep=62, n_ctx=4096
+
+prefill 0 (audio+vision) : 1.07731 s
+encode_image_with_vision_chunks: overview encoded in    50.35 ms
+
+encode_image_with_vision_chunks: image encoded in    70.18 ms by vision (1 chunks, 64 total tokens, grid: 1x1)
+omni_image_embed_make_chunks_with_filename: created 1 vision chunks from tools/omni/assets/test_case/omni_test_case/omni_test_case_0001.jpg
+stream_prefill: prefilled 1 vision chunks (64 tokens each)
+audition_audio_preprocess: Decoded audio - sample_rate=16000, n_samples=16000
+audition_get_mel_filters: Retrieved mel filters from model: 80 mel bins x 201 fft bins
+audition_audio_preprocess: Using mel filters - n_mel=80, n_fft=201
+audition_audio_preprocess: Generated 1 mel spectrogram chunk(s)
+audition_audio_preprocess: Mel spectrogram ready - n_len=100, n_mel=80, total_size=8000
+build_whisper: Whisper encoder graph built (projector output, pre-pooling)
+audition_audio_batch_encode: Audio input data - n_step=100, n_mel=80, total_elements=8000
+audition_audio_batch_encode: Before incrementing iter: input_frames=100, n_tokens=50, current_iter=1, current_total=50, new_total=100, max_tokens=1500
+audition_audio_batch_encode: KV cache iter incremented to 2 (total_tokens=100, max_tokens=1500)
+audition_audio_batch_encode: Final output shape: [4096, 10]
+audition_audio_batch_encode: Final output: 10 tokens x 4096 dims
+09:43:18.029 stream_prefill(index=1): processing user audio: tools/omni/assets/test_case/omni_test_case/omni_test_case_0001.wav
+09:43:18.038 stream_prefill(index=1): user audio embedding: n_pos=10
+09:43:18.053 
+
+c++ finish stream_prefill(index=1). n_past=141, n_keep=62, n_ctx=4096
+
+prefill 1 (audio+vision) : 0.121143 s
+encode_image_with_vision_chunks: overview encoded in    43.13 ms
+
+encode_image_with_vision_chunks: image encoded in    62.52 ms by vision (1 chunks, 64 total tokens, grid: 1x1)
+omni_image_embed_make_chunks_with_filename: created 1 vision chunks from tools/omni/assets/test_case/omni_test_case/omni_test_case_0002.jpg
+stream_prefill: prefilled 1 vision chunks (64 tokens each)
+audition_audio_preprocess: Decoded audio - sample_rate=16000, n_samples=16000
+audition_get_mel_filters: Retrieved mel filters from model: 80 mel bins x 201 fft bins
+audition_audio_preprocess: Using mel filters - n_mel=80, n_fft=201
+audition_audio_preprocess: Generated 1 mel spectrogram chunk(s)
+audition_audio_preprocess: Mel spectrogram ready - n_len=100, n_mel=80, total_size=8000
+build_whisper: Whisper encoder graph built (projector output, pre-pooling)
+audition_audio_batch_encode: Audio input data - n_step=100, n_mel=80, total_elements=8000
+audition_audio_batch_encode: Before incrementing iter: input_frames=100, n_tokens=50, current_iter=2, current_total=100, new_total=150, max_tokens=1500
+audition_audio_batch_encode: KV cache iter incremented to 3 (total_tokens=150, max_tokens=1500)
+audition_audio_batch_encode: Final output shape: [4096, 10]
+audition_audio_batch_encode: Final output: 10 tokens x 4096 dims
+09:43:18.140 stream_prefill(index=2): processing user audio: tools/omni/assets/test_case/omni_test_case/omni_test_case_0002.wav
+09:43:18.148 stream_prefill(index=2): user audio embedding: n_pos=10
+09:43:18.164 
+
+c++ finish stream_prefill(index=2). n_past=220, n_keep=62, n_ctx=4096
+
+prefill 2 (audio+vision) : 0.110811 s
+encode_image_with_vision_chunks: overview encoded in    38.52 ms
+
+encode_image_with_vision_chunks: image encoded in    57.87 ms by vision (1 chunks, 64 total tokens, grid: 1x1)
+omni_image_embed_make_chunks_with_filename: created 1 vision chunks from tools/omni/assets/test_case/omni_test_case/omni_test_case_0003.jpg
+stream_prefill: prefilled 1 vision chunks (64 tokens each)
+audition_audio_preprocess: Decoded audio - sample_rate=16000, n_samples=16000
+audition_get_mel_filters: Retrieved mel filters from model: 80 mel bins x 201 fft bins
+audition_audio_preprocess: Using mel filters - n_mel=80, n_fft=201
+audition_audio_preprocess: Generated 1 mel spectrogram chunk(s)
+audition_audio_preprocess: Mel spectrogram ready - n_len=100, n_mel=80, total_size=8000
+build_whisper: Whisper encoder graph built (projector output, pre-pooling)
+audition_audio_batch_encode: Audio input data - n_step=100, n_mel=80, total_elements=8000
+audition_audio_batch_encode: Before incrementing iter: input_frames=100, n_tokens=50, current_iter=3, current_total=150, new_total=200, max_tokens=1500
+audition_audio_batch_encode: KV cache iter incremented to 4 (total_tokens=200, max_tokens=1500)
+audition_audio_batch_encode: Final output shape: [4096, 10]
+audition_audio_batch_encode: Final output: 10 tokens x 4096 dims
+09:43:18.247 stream_prefill(index=3): processing user audio: tools/omni/assets/test_case/omni_test_case/omni_test_case_0003.wav
+09:43:18.256 stream_prefill(index=3): user audio embedding: n_pos=10
+09:43:18.272 
+
+c++ finish stream_prefill(index=3). n_past=299, n_keep=62, n_ctx=4096
+
+prefill 3 (audio+vision) : 0.107651 s
+encode_image_with_vision_chunks: overview encoded in    36.61 ms
+
+encode_image_with_vision_chunks: image encoded in    55.97 ms by vision (1 chunks, 64 total tokens, grid: 1x1)
+omni_image_embed_make_chunks_with_filename: created 1 vision chunks from tools/omni/assets/test_case/omni_test_case/omni_test_case_0004.jpg
+stream_prefill: prefilled 1 vision chunks (64 tokens each)
+audition_audio_preprocess: Decoded audio - sample_rate=16000, n_samples=16000
+audition_get_mel_filters: Retrieved mel filters from model: 80 mel bins x 201 fft bins
+audition_audio_preprocess: Using mel filters - n_mel=80, n_fft=201
+audition_audio_preprocess: Generated 1 mel spectrogram chunk(s)
+audition_audio_preprocess: Mel spectrogram ready - n_len=100, n_mel=80, total_size=8000
+build_whisper: Whisper encoder graph built (projector output, pre-pooling)
+audition_audio_batch_encode: Audio input data - n_step=100, n_mel=80, total_elements=8000
+audition_audio_batch_encode: Before incrementing iter: input_frames=100, n_tokens=50, current_iter=4, current_total=200, new_total=250, max_tokens=1500
+audition_audio_batch_encode: KV cache iter incremented to 5 (total_tokens=250, max_tokens=1500)
+audition_audio_batch_encode: Final output shape: [4096, 10]
+audition_audio_batch_encode: Final output: 10 tokens x 4096 dims
+09:43:18.353 stream_prefill(index=4): processing user audio: tools/omni/assets/test_case/omni_test_case/omni_test_case_0004.wav
+09:43:18.361 stream_prefill(index=4): user audio embedding: n_pos=10
+09:43:18.377 
+
+c++ finish stream_prefill(index=4). n_past=378, n_keep=62, n_ctx=4096
+
+prefill 4 (audio+vision) : 0.104579 s
+encode_image_with_vision_chunks: overview encoded in    36.72 ms
+
+encode_image_with_vision_chunks: image encoded in    56.09 ms by vision (1 chunks, 64 total tokens, grid: 1x1)
+omni_image_embed_make_chunks_with_filename: created 1 vision chunks from tools/omni/assets/test_case/omni_test_case/omni_test_case_0005.jpg
+stream_prefill: prefilled 1 vision chunks (64 tokens each)
+audition_audio_preprocess: Decoded audio - sample_rate=16000, n_samples=16000
+audition_get_mel_filters: Retrieved mel filters from model: 80 mel bins x 201 fft bins
+audition_audio_preprocess: Using mel filters - n_mel=80, n_fft=201
+audition_audio_preprocess: Generated 1 mel spectrogram chunk(s)
+audition_audio_preprocess: Mel spectrogram ready - n_len=100, n_mel=80, total_size=8000
+build_whisper: Whisper encoder graph built (projector output, pre-pooling)
+audition_audio_batch_encode: Audio input data - n_step=100, n_mel=80, total_elements=8000
+audition_audio_batch_encode: Before incrementing iter: input_frames=100, n_tokens=50, current_iter=5, current_total=250, new_total=300, max_tokens=1500
+audition_audio_batch_encode: KV cache iter incremented to 6 (total_tokens=300, max_tokens=1500)
+audition_audio_batch_encode: Final output shape: [4096, 10]
+audition_audio_batch_encode: Final output: 10 tokens x 4096 dims
+09:43:18.458 stream_prefill(index=5): processing user audio: tools/omni/assets/test_case/omni_test_case/omni_test_case_0005.wav
+09:43:18.466 stream_prefill(index=5): user audio embedding: n_pos=10
+09:43:18.482 
+
+c++ finish stream_prefill(index=5). n_past=457, n_keep=62, n_ctx=4096
+
+prefill 5 (audio+vision) : 0.105065 s
+encode_image_with_vision_chunks: overview encoded in    36.70 ms
+
+encode_image_with_vision_chunks: image encoded in    56.03 ms by vision (1 chunks, 64 total tokens, grid: 1x1)
+omni_image_embed_make_chunks_with_filename: created 1 vision chunks from tools/omni/assets/test_case/omni_test_case/omni_test_case_0006.jpg
+stream_prefill: prefilled 1 vision chunks (64 tokens each)
+audition_audio_preprocess: Decoded audio - sample_rate=16000, n_samples=16000
+audition_get_mel_filters: Retrieved mel filters from model: 80 mel bins x 201 fft bins
+audition_audio_preprocess: Using mel filters - n_mel=80, n_fft=201
+audition_audio_preprocess: Generated 1 mel spectrogram chunk(s)
+audition_audio_preprocess: Mel spectrogram ready - n_len=100, n_mel=80, total_size=8000
+build_whisper: Whisper encoder graph built (projector output, pre-pooling)
+audition_audio_batch_encode: Audio input data - n_step=100, n_mel=80, total_elements=8000
+audition_audio_batch_encode: Before incrementing iter: input_frames=100, n_tokens=50, current_iter=6, current_total=300, new_total=350, max_tokens=1500
+audition_audio_batch_encode: KV cache iter incremented to 7 (total_tokens=350, max_tokens=1500)
+audition_audio_batch_encode: Final output shape: [4096, 10]
+audition_audio_batch_encode: Final output: 10 tokens x 4096 dims
+09:43:18.563 stream_prefill(index=6): processing user audio: tools/omni/assets/test_case/omni_test_case/omni_test_case_0006.wav
+09:43:18.571 stream_prefill(index=6): user audio embedding: n_pos=10
+09:43:18.587 
+
+c++ finish stream_prefill(index=6). n_past=536, n_keep=62, n_ctx=4096
+
+prefill 6 (audio+vision) : 0.105223 s
+encode_image_with_vision_chunks: overview encoded in    36.68 ms
+
+encode_image_with_vision_chunks: image encoded in    56.04 ms by vision (1 chunks, 64 total tokens, grid: 1x1)
+omni_image_embed_make_chunks_with_filename: created 1 vision chunks from tools/omni/assets/test_case/omni_test_case/omni_test_case_0007.jpg
+stream_prefill: prefilled 1 vision chunks (64 tokens each)
+audition_audio_preprocess: Decoded audio - sample_rate=16000, n_samples=16000
+audition_get_mel_filters: Retrieved mel filters from model: 80 mel bins x 201 fft bins
+audition_audio_preprocess: Using mel filters - n_mel=80, n_fft=201
+audition_audio_preprocess: Generated 1 mel spectrogram chunk(s)
+audition_audio_preprocess: Mel spectrogram ready - n_len=100, n_mel=80, total_size=8000
+build_whisper: Whisper encoder graph built (projector output, pre-pooling)
+audition_audio_batch_encode: Audio input data - n_step=100, n_mel=80, total_elements=8000
+audition_audio_batch_encode: Before incrementing iter: input_frames=100, n_tokens=50, current_iter=7, current_total=350, new_total=400, max_tokens=1500
+audition_audio_batch_encode: KV cache iter incremented to 8 (total_tokens=400, max_tokens=1500)
+audition_audio_batch_encode: Final output shape: [4096, 10]
+audition_audio_batch_encode: Final output: 10 tokens x 4096 dims
+09:43:18.668 stream_prefill(index=7): processing user audio: tools/omni/assets/test_case/omni_test_case/omni_test_case_0007.wav
+09:43:18.677 stream_prefill(index=7): user audio embedding: n_pos=10
+09:43:18.693 
+
+c++ finish stream_prefill(index=7). n_past=615, n_keep=62, n_ctx=4096
+
+prefill 7 (audio+vision) : 0.106306 s
+encode_image_with_vision_chunks: overview encoded in    37.00 ms
+
+encode_image_with_vision_chunks: image encoded in    56.50 ms by vision (1 chunks, 64 total tokens, grid: 1x1)
+omni_image_embed_make_chunks_with_filename: created 1 vision chunks from tools/omni/assets/test_case/omni_test_case/omni_test_case_0008.jpg
+stream_prefill: prefilled 1 vision chunks (64 tokens each)
+audition_audio_preprocess: Decoded audio - sample_rate=16000, n_samples=16000
+audition_get_mel_filters: Retrieved mel filters from model: 80 mel bins x 201 fft bins
+audition_audio_preprocess: Using mel filters - n_mel=80, n_fft=201
+audition_audio_preprocess: Generated 1 mel spectrogram chunk(s)
+audition_audio_preprocess: Mel spectrogram ready - n_len=100, n_mel=80, total_size=8000
+build_whisper: Whisper encoder graph built (projector output, pre-pooling)
+audition_audio_batch_encode: Audio input data - n_step=100, n_mel=80, total_elements=8000
+audition_audio_batch_encode: Before incrementing iter: input_frames=100, n_tokens=50, current_iter=8, current_total=400, new_total=450, max_tokens=1500
+audition_audio_batch_encode: KV cache iter incremented to 9 (total_tokens=450, max_tokens=1500)
+audition_audio_batch_encode: Final output shape: [4096, 10]
+audition_audio_batch_encode: Final output: 10 tokens x 4096 dims
+09:43:18.775 stream_prefill(index=8): processing user audio: tools/omni/assets/test_case/omni_test_case/omni_test_case_0008.wav
+09:43:18.783 stream_prefill(index=8): user audio embedding: n_pos=10
+09:43:18.799 
+
+c++ finish stream_prefill(index=8). n_past=694, n_keep=62, n_ctx=4096
+
+prefill 8 (audio+vision) : 0.105634 s
+09:43:18.799 📍 stream_decode 开始: n_past=694, n_keep=62, n_ctx=4096, duplex_mode=0
+09:43:18.799 stream_decode: create tts thread (simplex mode)
+09:43:18.799 stream_decode: create t2w thread
+09:43:18.799 wait prefill done
+09:43:18.799 📍 [单工TTS] 添加 assistant prompt: "<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+<|tts_bos|>", n_past=694
+09:43:18.799 T2W thread (C++) started
+<user>
+<assistant>09:43:18.799 TTS: 创建单工模式输出目录: ./tools/omni/output/round_000
+09:43:18.799 TTS thread started
+09:43:18.805 📍 [单工TTS] assistant prompt 完成, n_past=704
+09:43:18.805 LLM decode: max_tgt_len = 4096, n_predict = -1, n_ctx = 4096
+09:43:18.869 LLM->TTS: text='The person in the picture is skiing down the mountain', n_tokens=10, hidden_size=40960, n_embd=4096, token_ids=[785 1697 304 279 6802 374 62017 1495 279 16301]
+09:43:18.869 TTS<-LLM: chunk_idx=0, text='The person in the picture is skiing down the mountain', n_tokens=10, hidden_size=40960, token_ids=[785 1697 304 279 6802 374 62017 1495 279 16301]
+09:43:18.869 TTS: after queue pop - speek_done=0, llm_finish=0, llm_text.empty=0, token_ids.size=10
+09:43:18.869 TTS: before empty check - response.empty=0, response='The person in the picture is skiing down the mount', llm_finish=0
+09:43:18.869 TTS: DEBUG before has_llm_data - token_ids.size=10, hidden_states.size=40960, n_embd=4096
+09:43:18.869 TTS: has_llm_data=1, token_ids=10, hidden_states=40960, n_embd=4096, llm_finish=0
+09:43:18.869 TTS: n_tokens_orig=10, n_tokens_filtered=10 (filtered 0 special tokens)
+09:43:18.880 LLM: detected end token, set llm_generation_done=true
+09:43:18.880 LLM->TTS: text='.', n_tokens=1, hidden_size=4096, n_embd=4096, token_ids=[13]
+0.07.750.014 I TTS condition graph: initialized (vocab=152064, hidden=768)
+Waiting for audio generation to complete...
+Audio generation completed.
+09:43:18.880 📍 Decode 结束: n_past=716, 剩余空间=3380, 无需滑窗
+09:43:18.880 📍 轮次 1 结束，记录边界于 n_past=716
+09:43:18.887 📍 为下一轮准备: eval <|im_end|>\n<|im_start|>user\n, n_past=721
+09:43:18.887 omni_stop_threads: stop signals sent
+09:43:18.887 T2W(C++) 线程: 停止
+audition_whisper_free_kv_cache: KV cache freed
+Token2Wav (C++): session released
+09:43:18.891 TTS: saved merged embeddings (text) to ./tools/omni/output/round_000/llm_debug/chunk_0/merged_embeddings.txt
+09:43:18.891 TTS Simplex: generating audio tokens for chunk 0 (n_tokens=10, tts_n_embd=768)
+09:43:18.891 TTS Simplex: 在 prefill 前添加 audio_bos (chunk_idx=0, new_size=11)
+09:43:18.891 TTS Simplex: first chunk - cleared KV cache
+09:43:18.891 TTS Simplex: first chunk - cleared tts_all_generated_tokens and tts_token_buffer
+09:43:18.901 TTS Simplex: prefill completed, n_past_tts=11
+09:43:18.901 TTS Simplex: sampler created
+09:43:18.901 TTS simplex: is_audio_bos=true (first audio token)
+09:43:18.908 TTS Simplex Phase1: token 1/500: rel_id=2067
+09:43:18.911 TTS Simplex Phase1: token 2/500: rel_id=1770
+09:43:18.914 TTS Simplex Phase1: token 3/500: rel_id=74
+09:43:18.917 TTS Simplex Phase1: token 4/500: rel_id=1325
+09:43:18.920 TTS Simplex Phase1: token 5/500: rel_id=1978
+09:43:18.978 TTS Simplex Phase1: yield 25 tokens 到 T2W (step 25, buffer=25)
+09:43:18.978 TTS Simplex Phase1: token 25/500: rel_id=2139
+09:43:19.051 TTS Simplex Phase1: yield 25 tokens 到 T2W (step 50, buffer=25)
+09:43:19.051 TTS Simplex Phase1: token 50/500: rel_id=4994
+09:43:19.063 TTS Simplex Phase1: EOS token at step 54
+09:43:19.063 TTS Simplex: chunk 结束，tts_token_buffer 剩余 3 tokens (保留等下一个 chunk)
+09:43:19.063 TTS Simplex: generated 53 audio tokens for chunk 0
+09:43:19.063 TTS Simplex: chunk 0 first tokens: [2067 1770 74 1325 1978 ], last tokens: [4913 4994 4724 6181 3994 ]
+09:43:19.063 TTS Simplex: updated tts_n_past_accumulated=64, total_generated_tokens=53
+tts thread end
+t2w thread end

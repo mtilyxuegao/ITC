@@ -1,0 +1,24 @@
+[32m✓ Downloaded[0m
+  path: /root/models/MiniCPM-o-4_5-gguf/audio/MiniCPM-o-4_5-audio-F16.gguf
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[32m✓ Downloaded[0m
+  path: /root/models/MiniCPM-o-4_5-gguf/tts/MiniCPM-o-4_5-tts-F16.gguf
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[32m✓ Downloaded[0m
+  path: /root/models/MiniCPM-o-4_5-gguf/tts/MiniCPM-o-4_5-projector-F16.gguf
+[32m✓ Downloaded[0m
+  path: /root/models/MiniCPM-o-4_5-gguf/vision/MiniCPM-o-4_5-vision-F16.gguf
+[32m✓ Downloaded[0m
+  path: /root/models/MiniCPM-o-4_5-gguf/token2wav-gguf/encoder.gguf
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[32m✓ Downloaded[0m
+  path: /root/models/MiniCPM-o-4_5-gguf/token2wav-gguf/flow_extra.gguf
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[32m✓ Downloaded[0m
+  path: /root/models/MiniCPM-o-4_5-gguf/token2wav-gguf/flow_matching.gguf
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[32m✓ Downloaded[0m
+  path: /root/models/MiniCPM-o-4_5-gguf/token2wav-gguf/hifigan2.gguf
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[32m✓ Downloaded[0m
+  path: /root/models/MiniCPM-o-4_5-gguf/token2wav-gguf/prompt_cache.gguf

@@ -1,0 +1,73 @@
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.0.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+0.00.231.957 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.00.539.681 W llama_context: n_ctx_seq (4096) < n_ctx_train (40960) -- the full capacity of the model will not be utilized
+=== Model Paths ===
+  Base dir:   /models/MiniCPM-o-4_5-gguf
+  LLM:        /models/MiniCPM-o-4_5-gguf/MiniCPM-o-4_5-Q4_K_M.gguf [OK]
+  Vision:     /models/MiniCPM-o-4_5-gguf/vision/MiniCPM-o-4_5-vision-F16.gguf [OK]
+  Audio:      /models/MiniCPM-o-4_5-gguf/audio/MiniCPM-o-4_5-audio-F16.gguf [OK]
+  TTS:        /models/MiniCPM-o-4_5-gguf/tts/MiniCPM-o-4_5-tts-F16.gguf [OK]
+  Projector:  /models/MiniCPM-o-4_5-gguf/tts/MiniCPM-o-4_5-projector-F16.gguf [OK]
+===================
+=== Initializing Omni Context ===
+  Media type: 1 (audio only)
+  TTS enabled: no
+  Context size: 4096
+  GPU layers: 99
+  Vision backend: metal
+  Vision batch encode: disabled
+  TTS bin dir: /models/MiniCPM-o-4_5-gguf/tts
+  Ref audio: tools/omni/assets/default_ref_audio/default_ref_audio.wav
+10:10:24.054 === omni_init start
+10:10:24.054 media_type = 1, duplex_mode = 0, base_output_dir = ./tools/omni/output
+10:10:24.054 === omni_init: loading new LLM model
+10:10:24.599 === omni_init: loading APM model
+10:10:24.659 APM: init from /models/MiniCPM-o-4_5-gguf/audio/MiniCPM-o-4_5-audio-F16.gguf
+10:10:24.659 === omni_init success: ctx_llama = 0x55994f695170
+10:10:24.659 stream_prefill: n_past = 0
+ voice_clone_prompt = <|im_start|>system
+模仿音频样本的音色并生成新的内容。
+<|audio_start|>
+ assistant_prompt = <|audio_end|>你的任务是用这种声音模式来当一个助手。请认真、高质量地回复用户的问题。请用高自然度的方式和用户聊天。你是由面壁智能开发的人工智能助手：面壁小钢炮。<|im_end|>
+<|im_start|>user
+
+10:10:24.659 system prompt ref_audio: tools/omni/assets/test_case/audio_test_case/audio_test_case_0000.wav
+10:10:26.368 system prompt ref_audio embedding: n_pos=10
+10:10:26.382 🔒 n_keep 设置为 79 (system prompt tokens)，这部分永远不会被滑动窗口删除
+10:10:26.382 stream_prefill(index=0): system prompt 初始化完成，ref_audio 已在其中 prefill
+10:10:26.382 [SW] system_prompt registered: preserve_length=79 (will be protected from sliding)
+10:10:26.382 n_past = 79
+10:10:26.382 
+
+c++ finish stream_prefill(index=0). n_past=79, n_keep=79, n_ctx=4096
+
+prefill 0 (audio) : 1.72234 s
+10:10:26.382 stream_prefill(index=1): processing user audio: tools/omni/assets/test_case/audio_test_case/audio_test_case_0001.wav
+10:10:26.401 stream_prefill(index=1): user audio embedding: n_pos=10
+10:10:26.418 
+
+c++ finish stream_prefill(index=1). n_past=91, n_keep=79, n_ctx=4096
+
+prefill 1 (audio) : 0.0361751 s
+10:10:26.418 📍 stream_decode 开始: n_past=91, n_keep=79, n_ctx=4096, duplex_mode=0
+10:10:26.418 wait prefill done
+10:10:26.423 LLM decode: max_tgt_len = 4096, n_predict = -1, n_ctx = 4096
+10:10:26.839 LLM: detected end token, set llm_generation_done=true
+10:10:26.839 📍 Decode 结束: n_past=206, 剩余空间=3890, 无需滑窗
+10:10:26.839 📍 轮次 1 结束，记录边界于 n_past=206
+10:10:26.846 📍 为下一轮准备: eval <|im_end|>\n<|im_start|>user\n, n_past=211
+10:10:26.846 omni_stop_threads: stop signals sent

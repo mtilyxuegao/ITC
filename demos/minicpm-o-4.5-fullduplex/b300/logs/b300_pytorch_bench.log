@@ -1,0 +1,76 @@
+2026-06-20 10:19:08,267 [WARNING] config: config.json 不存在 (/app/config.json)，使用全部默认值。加载模型的进程请通过 --model-path 或 config.json 提供 model.model_path。
+2026-06-20 10:19:08,268 [INFO] benchmark: ============================================================
+2026-06-20 10:19:08,268 [INFO] benchmark: Omni Duplex Benchmark
+2026-06-20 10:19:08,268 [INFO] benchmark: ============================================================
+2026-06-20 10:19:08,268 [INFO] benchmark: PyTorch:       2.9.0+cu130
+2026-06-20 10:19:08,268 [INFO] benchmark: CUDA:          13.0
+2026-06-20 10:19:08,298 [INFO] benchmark: GPU:           NVIDIA B300 SXM6 AC
+2026-06-20 10:19:08,298 [INFO] benchmark: Model:         /models/MiniCPM-o-4_5
+2026-06-20 10:19:08,298 [INFO] benchmark: PT path:       None
+2026-06-20 10:19:08,298 [INFO] benchmark: Ref audio:     assets/ref_audio/ref_en_dlc_1.wav
+2026-06-20 10:19:08,298 [INFO] benchmark: Attn impl:     auto
+2026-06-20 10:19:08,298 [INFO] benchmark: Quantized:     False
+2026-06-20 10:19:08,298 [INFO] benchmark: Videos:        ['assets/samples/compile.mp4']
+2026-06-20 10:19:08,298 [INFO] benchmark: System prompt: Streaming Omni Conversation.
+2026-06-20 10:19:08,298 [INFO] benchmark: Max chunks:    all
+2026-06-20 10:19:08,298 [INFO] benchmark: Compile:       False
+2026-06-20 10:19:08,298 [INFO] benchmark: ============================================================
+2026-06-20 10:19:08,298 [INFO] benchmark: [1/3] Loading model...
+/usr/local/lib/python3.12/site-packages/transformers/models/auto/image_processing_auto.py:604: FutureWarning: The image_processor_class argument is deprecated and will be removed in v4.42. Please use `slow_image_processor_class`, or `fast_image_processor_class` instead
+  warnings.warn(
+2026-06-20 10:19:10,088 [INFO] benchmark: attn_implementation: auto -> sdpa
+2026-06-20 10:19:10,089 [INFO] MiniCPMO45.configuration_minicpmo: vision_config is None, using default vision config
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:01,  2.62it/s]Loading checkpoint shards:  50%|█████     | 2/4 [00:00<00:00,  2.68it/s]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:01<00:00,  2.71it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:01<00:00,  3.13it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:01<00:00,  2.95it/s]
+2026-06-20 10:19:13,843 [INFO] benchmark: [1/3] Model loaded (5.5s)
+2026-06-20 10:19:13,843 [INFO] benchmark: [2/3] init_unified...
+2026-06-20 10:19:13,843 [INFO] MiniCPMO45.modeling_minicpmo_unified: Initializing unified mode...
+2026-06-20 10:19:13,843 [INFO] MiniCPMO45.modeling_minicpmo_unified: Chat vocoder config: token2wav
+2026-06-20 10:19:13,843 [WARNING] MiniCPMO45.modeling_minicpmo_unified: audio tokenizer type is set to s3tokenizer_step_audio
+2026-06-20 10:19:13,896 [INFO] MiniCPMO45.modeling_minicpmo_unified: Token2wav model_dir: /models/MiniCPM-o-4_5/assets/token2wav, enable_float16: False, n_timesteps: 5
+Using a slow image processor as `use_fast` is unset and a slow processor was saved with this model. `use_fast=True` will be the default behavior in v4.52, even if the model was saved with a slow processor. This will result in minor differences in outputs. You'll still be able to use a slow processor with `use_fast=False`.
+/usr/local/lib/python3.12/site-packages/transformers/models/auto/image_processing_auto.py:604: FutureWarning: The image_processor_class argument is deprecated and will be removed in v4.42. Please use `slow_image_processor_class`, or `fast_image_processor_class` instead
+  warnings.warn(
+2026-06-20 10:19:15,909 [INFO] MiniCPMO45.modeling_minicpmo_unified: [DuplexCapability] Sliding window: mode=off, high=4000, low=3500, prev_max=500, max_units=24
+2026-06-20 10:19:15,909 [INFO] MiniCPMO45.modeling_minicpmo_unified: [DuplexCapability] 初始化完成
+2026-06-20 10:19:15,909 [INFO] MiniCPMO45.modeling_minicpmo_unified: Switching mode: None -> ProcessorMode.STREAMING
+2026-06-20 10:19:15,909 [INFO] MiniCPMO45.modeling_minicpmo_unified: Unified mode initialization complete
+2026-06-20 10:19:15,909 [INFO] benchmark: [2/3] init_unified done (2.1s)
+2026-06-20 10:19:15,909 [INFO] benchmark: [3/3] Running benchmark...
+2026-06-20 10:19:16,362 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] Starting benchmark: 1 video(s), system_prompt='Streaming Omni Conversation.'
+2026-06-20 10:19:16,362 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] ── Video 1/1: compile.mp4 (max_chunks=all) ──
+2026-06-20 10:19:16,636 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] Extracted 20 chunks, 20 frames
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/torchaudio/_torchcodec.py", line 82, in load_with_torchcodec
+    from torchcodec.decoders import AudioDecoder
+ModuleNotFoundError: No module named 'torchcodec'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/benchmark.py", line 290, in <module>
+    main()
+  File "/app/benchmark.py", line 223, in main
+    results = model.benchmark(
+              ^^^^^^^^^^^^^^^^
+  File "/app/MiniCPMO45/modeling_minicpmo_unified.py", line 870, in benchmark
+    self.duplex.prepare(
+  File "/app/MiniCPMO45/modeling_minicpmo_unified.py", line 4472, in prepare
+    self._init_token2wav_cache(prompt_wav_path)
+  File "/app/MiniCPMO45/modeling_minicpmo_unified.py", line 4401, in _init_token2wav_cache
+    flow_cache, hift_cache = self.model.tts.audio_tokenizer.set_stream_cache(prompt_wav_path)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/stepaudio2/token2wav.py", line 146, in set_stream_cache
+    self.cache = self._prepare_prompt(prompt_wav)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/stepaudio2/token2wav.py", line 103, in _prepare_prompt
+    audio = s3tokenizer.load_audio(prompt_wav, sr=16000)  # [T]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/s3tokenizer/utils.py", line 193, in load_audio
+    audio, sample_rate = torchaudio.load(file)
+                         ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torchaudio/__init__.py", line 86, in load
+    return load_with_torchcodec(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/torchaudio/_torchcodec.py", line 84, in load_with_torchcodec
+    raise ImportError(
+ImportError: TorchCodec is required for load_with_torchcodec. Please install torchcodec to use this function.

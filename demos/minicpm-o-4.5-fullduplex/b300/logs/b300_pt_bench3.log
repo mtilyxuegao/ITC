@@ -1,0 +1,649 @@
+2026-06-20 10:21:30,420 [WARNING] config: config.json 不存在 (/app/config.json)，使用全部默认值。加载模型的进程请通过 --model-path 或 config.json 提供 model.model_path。
+2026-06-20 10:21:30,420 [INFO] benchmark: ============================================================
+2026-06-20 10:21:30,420 [INFO] benchmark: Omni Duplex Benchmark
+2026-06-20 10:21:30,420 [INFO] benchmark: ============================================================
+2026-06-20 10:21:30,420 [INFO] benchmark: PyTorch:       2.9.0+cu130
+2026-06-20 10:21:30,420 [INFO] benchmark: CUDA:          13.0
+2026-06-20 10:21:30,450 [INFO] benchmark: GPU:           NVIDIA B300 SXM6 AC
+2026-06-20 10:21:30,450 [INFO] benchmark: Model:         /models/MiniCPM-o-4_5
+2026-06-20 10:21:30,450 [INFO] benchmark: PT path:       None
+2026-06-20 10:21:30,450 [INFO] benchmark: Ref audio:     assets/ref_audio/ref_en_dlc_1.wav
+2026-06-20 10:21:30,450 [INFO] benchmark: Attn impl:     auto
+2026-06-20 10:21:30,450 [INFO] benchmark: Quantized:     False
+2026-06-20 10:21:30,450 [INFO] benchmark: Videos:        ['assets/samples/compile.mp4']
+2026-06-20 10:21:30,450 [INFO] benchmark: System prompt: Streaming Omni Conversation.
+2026-06-20 10:21:30,450 [INFO] benchmark: Max chunks:    all
+2026-06-20 10:21:30,450 [INFO] benchmark: Compile:       False
+2026-06-20 10:21:30,450 [INFO] benchmark: ============================================================
+2026-06-20 10:21:30,450 [INFO] benchmark: [1/3] Loading model...
+/usr/local/lib/python3.12/site-packages/transformers/models/auto/image_processing_auto.py:604: FutureWarning: The image_processor_class argument is deprecated and will be removed in v4.42. Please use `slow_image_processor_class`, or `fast_image_processor_class` instead
+  warnings.warn(
+2026-06-20 10:21:32,253 [INFO] benchmark: attn_implementation: auto -> sdpa
+2026-06-20 10:21:32,254 [INFO] MiniCPMO45.configuration_minicpmo: vision_config is None, using default vision config
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:01,  2.62it/s]Loading checkpoint shards:  50%|█████     | 2/4 [00:00<00:00,  2.69it/s]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:01<00:00,  2.71it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:01<00:00,  3.12it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:01<00:00,  2.94it/s]
+2026-06-20 10:21:36,076 [INFO] benchmark: [1/3] Model loaded (5.6s)
+2026-06-20 10:21:36,077 [INFO] benchmark: [2/3] init_unified...
+2026-06-20 10:21:36,077 [INFO] MiniCPMO45.modeling_minicpmo_unified: Initializing unified mode...
+2026-06-20 10:21:36,077 [INFO] MiniCPMO45.modeling_minicpmo_unified: Chat vocoder config: token2wav
+2026-06-20 10:21:36,077 [WARNING] MiniCPMO45.modeling_minicpmo_unified: audio tokenizer type is set to s3tokenizer_step_audio
+2026-06-20 10:21:36,117 [INFO] MiniCPMO45.modeling_minicpmo_unified: Token2wav model_dir: /models/MiniCPM-o-4_5/assets/token2wav, enable_float16: False, n_timesteps: 5
+Using a slow image processor as `use_fast` is unset and a slow processor was saved with this model. `use_fast=True` will be the default behavior in v4.52, even if the model was saved with a slow processor. This will result in minor differences in outputs. You'll still be able to use a slow processor with `use_fast=False`.
+/usr/local/lib/python3.12/site-packages/transformers/models/auto/image_processing_auto.py:604: FutureWarning: The image_processor_class argument is deprecated and will be removed in v4.42. Please use `slow_image_processor_class`, or `fast_image_processor_class` instead
+  warnings.warn(
+2026-06-20 10:21:38,161 [INFO] MiniCPMO45.modeling_minicpmo_unified: [DuplexCapability] Sliding window: mode=off, high=4000, low=3500, prev_max=500, max_units=24
+2026-06-20 10:21:38,161 [INFO] MiniCPMO45.modeling_minicpmo_unified: [DuplexCapability] 初始化完成
+2026-06-20 10:21:38,161 [INFO] MiniCPMO45.modeling_minicpmo_unified: Switching mode: None -> ProcessorMode.STREAMING
+2026-06-20 10:21:38,162 [INFO] MiniCPMO45.modeling_minicpmo_unified: Unified mode initialization complete
+2026-06-20 10:21:38,162 [INFO] benchmark: [2/3] init_unified done (2.1s)
+2026-06-20 10:21:38,162 [INFO] benchmark: [3/3] Running benchmark...
+2026-06-20 10:21:38,624 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] Starting benchmark: 1 video(s), system_prompt='Streaming Omni Conversation.'
+2026-06-20 10:21:38,624 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] ── Video 1/1: compile.mp4 (max_chunks=all) ──
+2026-06-20 10:21:38,901 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] Extracted 20 chunks, 20 frames
+fixed s3 encode
+prompt_speech_tokens_lens tensor([188], device='cuda:0', dtype=torch.int32)
+prompt_mels.shape torch.Size([1, 376, 80])
+prompt_mels_lens tensor([376], device='cuda:0', dtype=torch.int32)
+2026-06-20 10:22:07,613 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] prepare: registering system prompt protection
+2026-06-20 10:22:07,631 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+2026-06-20 10:22:08,504 [INFO] MiniCPMO45.modeling_minicpmo_unified: [For-loop Vision Feed] total_L=66, sum=161.2925
+2026-06-20 10:22:13,320 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=1 is_listen=True text_tokens=0 total_steps=1 tts_pad=allowed had_tts_pad=False
+  j=0 TERM id=151705 '<|listen|>' decode=4414.8ms (deferred)
+2026-06-20 10:22:13,321 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=0/20 | LISTEN | prefill: vis_proc=6ms vis_emb=637ms vis_feed=370ms aud_proc=1ms aud_emb=11ms aud_feed=19ms total=1275ms | generate: llm=4415ms tts_prep=0ms tts=0ms token2wav=0ms total=4415ms | unit_total=5690ms
+2026-06-20 10:22:13,337 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=True finalize=17ms
+2026-06-20 10:22:13,338 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+2026-06-20 10:22:13,438 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=2 is_listen=True text_tokens=0 total_steps=1 tts_pad=allowed had_tts_pad=False
+  j=0 TERM id=151705 '<|listen|>' decode=2.3ms (deferred)
+2026-06-20 10:22:13,438 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=1/20 | LISTEN | prefill: vis_proc=6ms vis_emb=9ms vis_feed=45ms aud_proc=1ms aud_emb=8ms aud_feed=15ms total=98ms | generate: llm=2ms tts_prep=0ms tts=0ms token2wav=0ms total=3ms | unit_total=101ms
+2026-06-20 10:22:13,454 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=True finalize=15ms
+2026-06-20 10:22:13,454 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+2026-06-20 10:22:13,617 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=3 is_listen=False text_tokens=3 total_steps=5 tts_pad=allowed had_tts_pad=False
+  j=0 SPECIAL id=151706 '<|speak|>' decode=2.2ms feed=14.7ms
+  j=1 TEXT id=2619 ' There' decode=1.5ms feed=14.5ms
+  j=2 TEXT id=525 ' are' decode=1.5ms feed=14.6ms
+  j=3 TEXT id=264 ' a' decode=1.5ms feed=14.6ms
+  j=4 TERM id=151718 '<|chunk_eos|>' decode=0.3ms (deferred)
+> speak:  There are a
+[36.562s] [AUDIO] Token2Wav buffer size: 7, new tokens: 4, has_chunk_eos: False
+2026-06-20 10:22:15,463 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Token2Wav] t=3 end_of_turn=False force_flush=True tts_tokens=4 buf_before=3 buf_after=7 wav=None wav_max=0.0000
+2026-06-20 10:22:15,463 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=2/20 | SPEAK " There are a" | prefill: vis_proc=6ms vis_emb=8ms vis_feed=44ms aud_proc=1ms aud_emb=6ms aud_feed=15ms total=95ms | generate: llm=68ms tts_prep=2ms tts=1846ms token2wav=0ms total=1915ms | unit_total=2010ms
+2026-06-20 10:22:15,480 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=False finalize=17ms
+2026-06-20 10:22:15,480 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+2026-06-20 10:22:15,696 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=4 is_listen=False text_tokens=6 total_steps=8 tts_pad=allowed had_tts_pad=False
+  j=0 SPECIAL id=151706 '<|speak|>' decode=2.3ms feed=14.7ms
+  j=1 TEXT id=2696 ' lot' decode=1.5ms feed=14.8ms
+  j=2 TEXT id=315 ' of' decode=1.5ms feed=14.7ms
+  j=3 TEXT id=511 ' se' decode=1.6ms feed=14.8ms
+  j=4 TEXT id=351 'ag' decode=1.5ms feed=14.7ms
+  j=5 TEXT id=70423 'ulls' decode=1.5ms feed=14.8ms
+  j=6 TEXT id=16307 ' flying' decode=1.5ms feed=14.7ms
+  j=7 TERM id=151718 '<|chunk_eos|>' decode=0.3ms (deferred)
+> speak:  lot of seagulls flying
+2026-06-20 10:22:15,868 [WARNING] MiniCPMO45.modeling_minicpmo_unified: incomplete result. hit max_new_token: 26
+[36.967s] [AUDIO] Token2Wav buffer size: 32, new tokens: 25, has_chunk_eos: False
+[39.979s] [AUDIO] Generated audio: 1.00s @ 24kHz, 1 chunks, remaining buffer: 7 tokens
+2026-06-20 10:22:18,880 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Token2Wav] t=4 end_of_turn=False force_flush=True tts_tokens=25 buf_before=7 buf_after=7 wav=24000samples/1000ms wav_max=0.2636
+2026-06-20 10:22:18,880 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=3/20 | SPEAK " lot of seagulls flying" | prefill: vis_proc=6ms vis_emb=9ms vis_feed=45ms aud_proc=1ms aud_emb=6ms aud_feed=15ms total=96ms | generate: llm=120ms tts_prep=1ms tts=172ms token2wav=3012ms total=3304ms | unit_total=3400ms
+2026-06-20 10:22:18,897 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=False finalize=17ms
+2026-06-20 10:22:18,897 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+> speak:  around. They're
+2026-06-20 10:22:19,081 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=5 is_listen=False text_tokens=4 total_steps=6 tts_pad=allowed had_tts_pad=False
+  j=0 SPECIAL id=151706 '<|speak|>' decode=2.4ms feed=14.7ms
+  j=1 TEXT id=2163 ' around' decode=1.5ms feed=14.7ms
+  j=2 TEXT id=13 '.' decode=1.5ms feed=14.9ms
+  j=3 TEXT id=2379 ' They' decode=1.5ms feed=14.7ms
+  j=4 TEXT id=2299 ''re' decode=1.5ms feed=14.6ms
+  j=5 TERM id=151718 '<|chunk_eos|>' decode=0.3ms (deferred)
+2026-06-20 10:22:19,253 [WARNING] MiniCPMO45.modeling_minicpmo_unified: incomplete result. hit max_new_token: 26
+[40.353s] [AUDIO] Token2Wav buffer size: 32, new tokens: 25, has_chunk_eos: False
+[40.420s] [AUDIO] Generated audio: 1.00s @ 24kHz, 1 chunks, remaining buffer: 7 tokens
+2026-06-20 10:22:19,321 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Token2Wav] t=5 end_of_turn=False force_flush=True tts_tokens=25 buf_before=7 buf_after=7 wav=24000samples/1000ms wav_max=0.1873
+2026-06-20 10:22:19,321 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=4/20 | SPEAK " around. They're" | prefill: vis_proc=6ms vis_emb=9ms vis_feed=45ms aud_proc=1ms aud_emb=7ms aud_feed=15ms total=97ms | generate: llm=86ms tts_prep=1ms tts=173ms token2wav=67ms total=326ms | unit_total=423ms
+2026-06-20 10:22:19,336 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=False finalize=16ms
+2026-06-20 10:22:19,336 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+2026-06-20 10:22:19,485 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=6 is_listen=False text_tokens=2 total_steps=4 tts_pad=allowed had_tts_pad=False
+  j=0 SPECIAL id=151706 '<|speak|>' decode=2.3ms feed=14.6ms
+  j=1 TEXT id=678 ' all' decode=1.5ms feed=14.7ms
+  j=2 TEXT id=916 ' over' decode=1.5ms feed=14.7ms
+  j=3 TERM id=151718 '<|chunk_eos|>' decode=0.3ms (deferred)
+> speak:  all over
+2026-06-20 10:22:19,655 [WARNING] MiniCPMO45.modeling_minicpmo_unified: incomplete result. hit max_new_token: 26
+[40.754s] [AUDIO] Token2Wav buffer size: 32, new tokens: 25, has_chunk_eos: False
+[40.804s] [AUDIO] Generated audio: 1.00s @ 24kHz, 1 chunks, remaining buffer: 7 tokens
+2026-06-20 10:22:19,705 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Token2Wav] t=6 end_of_turn=False force_flush=True tts_tokens=25 buf_before=7 buf_after=7 wav=24000samples/1000ms wav_max=0.1617
+2026-06-20 10:22:19,705 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=5/20 | SPEAK " all over" | prefill: vis_proc=6ms vis_emb=9ms vis_feed=45ms aud_proc=1ms aud_emb=7ms aud_feed=15ms total=97ms | generate: llm=52ms tts_prep=0ms tts=170ms token2wav=50ms total=272ms | unit_total=369ms
+2026-06-20 10:22:19,720 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=False finalize=15ms
+2026-06-20 10:22:19,720 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+2026-06-20 10:22:19,901 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=7 is_listen=False text_tokens=4 total_steps=6 tts_pad=allowed had_tts_pad=False
+  j=0 SPECIAL id=151706 '<|speak|>' decode=2.4ms feed=14.8ms
+  j=1 TEXT id=279 ' the' decode=1.5ms feed=14.8ms
+  j=2 TEXT id=11321 ' beach' decode=1.5ms feed=14.7ms
+  j=3 TEXT id=13 '.' decode=1.5ms feed=14.5ms
+  j=4 TEXT id=1597 ' And' decode=1.5ms feed=14.7ms
+  j=5 TERM id=151718 '<|chunk_eos|>' decode=0.3ms (deferred)
+> speak:  the beach. And
+2026-06-20 10:22:20,072 [WARNING] MiniCPMO45.modeling_minicpmo_unified: incomplete result. hit max_new_token: 26
+[41.171s] [AUDIO] Token2Wav buffer size: 32, new tokens: 25, has_chunk_eos: False
+[41.220s] [AUDIO] Generated audio: 1.00s @ 24kHz, 1 chunks, remaining buffer: 7 tokens
+2026-06-20 10:22:20,121 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Token2Wav] t=7 end_of_turn=False force_flush=True tts_tokens=25 buf_before=7 buf_after=7 wav=24000samples/1000ms wav_max=0.2024
+2026-06-20 10:22:20,121 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=6/20 | SPEAK " the beach. And" | prefill: vis_proc=6ms vis_emb=8ms vis_feed=44ms aud_proc=1ms aud_emb=7ms aud_feed=14ms total=95ms | generate: llm=86ms tts_prep=0ms tts=171ms token2wav=49ms total=306ms | unit_total=401ms
+2026-06-20 10:22:20,136 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=False finalize=15ms
+2026-06-20 10:22:20,136 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+2026-06-20 10:22:20,334 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=8 is_listen=False text_tokens=5 total_steps=7 tts_pad=allowed had_tts_pad=False
+  j=0 SPECIAL id=151706 '<|speak|>' decode=2.6ms feed=14.7ms
+  j=1 TEXT id=1401 ' look' decode=1.5ms feed=14.5ms
+  j=2 TEXT id=11 ',' decode=1.6ms feed=14.6ms
+  j=3 TEXT id=4325 ' someone' decode=1.5ms feed=14.6ms
+  j=4 TEXT id=594 ''s' decode=1.5ms feed=14.5ms
+  j=5 TEXT id=4633 ' taking' decode=1.6ms feed=14.5ms
+  j=6 TERM id=151718 '<|chunk_eos|>' decode=0.3ms (deferred)
+> speak:  look, someone's taking
+2026-06-20 10:22:20,505 [WARNING] MiniCPMO45.modeling_minicpmo_unified: incomplete result. hit max_new_token: 26
+[41.605s] [AUDIO] Token2Wav buffer size: 32, new tokens: 25, has_chunk_eos: False
+[41.654s] [AUDIO] Generated audio: 1.00s @ 24kHz, 1 chunks, remaining buffer: 7 tokens
+2026-06-20 10:22:20,554 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Token2Wav] t=8 end_of_turn=False force_flush=True tts_tokens=25 buf_before=7 buf_after=7 wav=24000samples/1000ms wav_max=0.1335
+2026-06-20 10:22:20,555 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=7/20 | SPEAK " look, someone's taking" | prefill: vis_proc=6ms vis_emb=8ms vis_feed=44ms aud_proc=1ms aud_emb=6ms aud_feed=15ms total=95ms | generate: llm=103ms tts_prep=0ms tts=171ms token2wav=49ms total=323ms | unit_total=418ms
+2026-06-20 10:22:20,570 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=False finalize=15ms
+2026-06-20 10:22:20,570 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+2026-06-20 10:22:20,718 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=9 is_listen=False text_tokens=2 total_steps=4 tts_pad=allowed had_tts_pad=False
+  j=0 SPECIAL id=151706 '<|speak|>' decode=2.9ms feed=14.8ms
+  j=1 TEXT id=7249 ' photos' decode=1.5ms feed=14.6ms
+  j=2 TEXT id=13 '.' decode=1.6ms feed=14.6ms
+  j=3 TERM id=151718 '<|chunk_eos|>' decode=0.3ms (deferred)
+> speak:  photos.
+2026-06-20 10:22:20,886 [WARNING] MiniCPMO45.modeling_minicpmo_unified: incomplete result. hit max_new_token: 26
+[41.986s] [AUDIO] Token2Wav buffer size: 32, new tokens: 25, has_chunk_eos: False
+[42.035s] [AUDIO] Generated audio: 1.00s @ 24kHz, 1 chunks, remaining buffer: 7 tokens
+2026-06-20 10:22:20,936 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Token2Wav] t=9 end_of_turn=False force_flush=True tts_tokens=25 buf_before=7 buf_after=7 wav=24000samples/1000ms wav_max=0.1824
+2026-06-20 10:22:20,936 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=8/20 | SPEAK " photos." | prefill: vis_proc=6ms vis_emb=8ms vis_feed=44ms aud_proc=1ms aud_emb=7ms aud_feed=15ms total=95ms | generate: llm=52ms tts_prep=0ms tts=169ms token2wav=49ms total=271ms | unit_total=366ms
+2026-06-20 10:22:20,951 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=False finalize=15ms
+2026-06-20 10:22:20,951 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] streaming_prefill: mode=OMNI, has_frames=True, has_audio=True, starting unit
+2026-06-20 10:22:21,082 [INFO] MiniCPMO45.modeling_minicpmo_unified: [TokenTrace] t=10 is_listen=False text_tokens=1 total_steps=3 tts_pad=allowed had_tts_pad=False
+  j=0 SPECIAL id=151706 '<|speak|>' decode=3.1ms feed=14.6ms
+  j=1 TEXT id=151717 '<|turn_eos|>' decode=1.6ms feed=14.7ms
+  j=2 TERM id=151718 '<|chunk_eos|>' decode=0.3ms (deferred)
+> speak: 
+[42.325s] [AUDIO] Token2Wav buffer size: 28, new tokens: 21, has_chunk_eos: False
+[42.374s] [AUDIO] Flushing final 3 tokens
+[43.211s] [AUDIO] Generated audio: 1.28s @ 24kHz, 2 chunks, remaining buffer: 0 tokens
+2026-06-20 10:22:22,112 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Token2Wav] t=10 end_of_turn=True force_flush=True tts_tokens=21 buf_before=7 buf_after=0 wav=30720samples/1280ms wav_max=0.2042
+2026-06-20 10:22:22,112 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] video=compile.mp4 unit=9/20 | SPEAK | prefill: vis_proc=6ms vis_emb=8ms vis_feed=44ms aud_proc=1ms aud_emb=7ms aud_feed=15ms total=95ms | generate: llm=36ms tts_prep=0ms tts=144ms token2wav=886ms total=1065ms | unit_total=1160ms
+2026-06-20 10:22:22,129 [INFO] MiniCPMO45.modeling_minicpmo_unified: [Duplex] finalize_unit: omni is_listen=False finalize=17ms
+2026-06-20 10:22:22,129 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] end_of_turn at unit 9, stopping video
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] ============================================================
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] Benchmark Summary
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] ============================================================
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] Total: 10 units (2 LISTEN, 8 SPEAK) over 1 video(s), elapsed=43.5s
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] LISTEN (n=2):
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]   prefill:        avg=686ms  min=98ms  max=1275ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     vision_process: avg=6ms  min=6ms  max=6ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     vision_embed:  avg=323ms  min=9ms  max=637ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     vision_feed:   avg=207ms  min=45ms  max=370ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     audio_process: avg=1ms  min=1ms  max=1ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     audio_embed:   avg=10ms  min=8ms  max=11ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     audio_feed:    avg=17ms  min=15ms  max=19ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]   generate:       avg=2209ms  min=3ms  max=4415ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     llm:           avg=2209ms  min=2ms  max=4415ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]   unit_total:     avg=2895ms  min=101ms  max=5690ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] SPEAK (n=8):
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]   prefill:        avg=96ms  min=95ms  max=97ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     vision_process: avg=6ms  min=6ms  max=6ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     vision_embed:  avg=8ms  min=8ms  max=9ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     vision_feed:   avg=44ms  min=44ms  max=45ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     audio_process: avg=1ms  min=1ms  max=1ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     audio_embed:   avg=6ms  min=6ms  max=7ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     audio_feed:    avg=15ms  min=14ms  max=15ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]   generate:       avg=973ms  min=271ms  max=3304ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     llm:           avg=75ms  min=36ms  max=120ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     tts_prep:      avg=1ms  min=0ms  max=2ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     tts:           avg=377ms  min=144ms  max=1846ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]     token2wav:     avg=520ms  min=0ms  max=3012ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench]   unit_total:     avg=1068ms  min=366ms  max=3400ms
+2026-06-20 10:22:22,137 [INFO] MiniCPMO45.modeling_minicpmo_unified: [bench] ============================================================
+2026-06-20 10:22:22,137 [INFO] benchmark: [3/3] Benchmark done (44.0s)
+2026-06-20 10:22:22,406 [INFO] benchmark: ============================================================
+2026-06-20 10:22:22,406 [INFO] benchmark: Total script time: 52.0s
+2026-06-20 10:22:22,406 [INFO] benchmark: Results saved to: /app/benchmark.json
+2026-06-20 10:22:22,406 [INFO] benchmark: ============================================================
+
+{
+  "timestamp": "2026-06-20T10:22:22.405382",
+  "environment": {
+    "pytorch_version": "2.9.0+cu130",
+    "cuda_version": "13.0",
+    "gpu": {
+      "available": true,
+      "device_count": 1,
+      "device_name": "NVIDIA B300 SXM6 AC",
+      "cuda_version": "13.0",
+      "total_memory_gb": 267.69,
+      "major": 10,
+      "minor": 3,
+      "multi_processor_count": 148,
+      "driver_version": "580.126.09",
+      "memory_used_mb": 44412.0,
+      "memory_total_mb": 275040.0,
+      "temperature_c": 36,
+      "power_draw_w": 245.96,
+      "power_limit_w": 1100.0,
+      "sm_clock_mhz": 2032,
+      "sm_clock_max_mhz": 2032
+    }
+  },
+  "config": {
+    "model_path": "/models/MiniCPM-o-4_5",
+    "pt_path": null,
+    "attn_implementation": "sdpa",
+    "quantized": false,
+    "chat_vocoder": "token2wav"
+  },
+  "parameters": {
+    "video_paths": [
+      "assets/samples/compile.mp4"
+    ],
+    "video_dir": null,
+    "ref_audio_path": "assets/ref_audio/ref_en_dlc_1.wav",
+    "system_prompt": "Streaming Omni Conversation.",
+    "max_chunks_per_video": 0,
+    "compile": false,
+    "compile_mode": null,
+    "gpu_id": 0
+  },
+  "timing": {
+    "model_load_s": 5.63,
+    "init_unified_s": 2.08,
+    "benchmark_s": 43.98,
+    "total_script_s": 51.95
+  },
+  "results": {
+    "total_time": 43.51285481452942,
+    "num_videos": 1,
+    "num_units": 10,
+    "listen_count": 2,
+    "speak_count": 8,
+    "listen_stats": {
+      "count": 2,
+      "prefill": {
+        "vision_process": {
+          "avg": 5.738019943237305,
+          "min": 5.609989166259766,
+          "max": 5.866050720214844
+        },
+        "vision_embed": {
+          "avg": 322.7100372314453,
+          "min": 8.655786514282227,
+          "max": 636.7642879486084
+        },
+        "vision_feed": {
+          "avg": 207.2685956954956,
+          "min": 44.67582702636719,
+          "max": 369.861364364624
+        },
+        "audio_process": {
+          "avg": 0.8788108825683594,
+          "min": 0.7936954498291016,
+          "max": 0.9639263153076172
+        },
+        "audio_embed": {
+          "avg": 9.654998779296875,
+          "min": 8.159399032592773,
+          "max": 11.150598526000977
+        },
+        "audio_feed": {
+          "avg": 17.177581787109375,
+          "min": 14.959335327148438,
+          "max": 19.395828247070312
+        },
+        "total": {
+          "avg": 686.3201856613159,
+          "min": 98.13904762268066,
+          "max": 1274.5013236999512
+        }
+      },
+      "generate": {
+        "llm": {
+          "avg": 2208.8576555252075,
+          "min": 2.4924278259277344,
+          "max": 4415.222883224487
+        },
+        "tts_prep": {
+          "avg": 0.0,
+          "min": 0,
+          "max": 0
+        },
+        "tts": {
+          "avg": 0.0,
+          "min": 0,
+          "max": 0
+        },
+        "token2wav": {
+          "avg": 0.0,
+          "min": 0,
+          "max": 0
+        },
+        "total": {
+          "avg": 2208.889603614807,
+          "min": 2.5186538696289062,
+          "max": 4415.260553359985
+        }
+      },
+      "unit_total": {
+        "avg": 2895.209789276123,
+        "min": 100.65770149230957,
+        "max": 5689.7618770599365
+      }
+    },
+    "speak_stats": {
+      "count": 8,
+      "prefill": {
+        "vision_process": {
+          "avg": 5.858391523361206,
+          "min": 5.691766738891602,
+          "max": 6.048440933227539
+        },
+        "vision_embed": {
+          "avg": 8.465498685836792,
+          "min": 8.326292037963867,
+          "max": 8.669853210449219
+        },
+        "vision_feed": {
+          "avg": 44.26330327987671,
+          "min": 43.503522872924805,
+          "max": 44.826507568359375
+        },
+        "audio_process": {
+          "avg": 0.9293258190155029,
+          "min": 0.7345676422119141,
+          "max": 1.0476112365722656
+        },
+        "audio_embed": {
+          "avg": 6.495028734207153,
+          "min": 6.2046051025390625,
+          "max": 6.753206253051758
+        },
+        "audio_feed": {
+          "avg": 14.804244041442871,
+          "min": 14.380216598510742,
+          "max": 14.967679977416992
+        },
+        "total": {
+          "avg": 95.80469131469727,
+          "min": 94.94924545288086,
+          "max": 97.20087051391602
+        }
+      },
+      "generate": {
+        "llm": {
+          "avg": 75.39206743240356,
+          "min": 35.80141067504883,
+          "max": 119.97079849243164
+        },
+        "tts_prep": {
+          "avg": 0.5717277526855469,
+          "min": 0.247955322265625,
+          "max": 1.528024673461914
+        },
+        "tts": {
+          "avg": 376.71157717704773,
+          "min": 143.5074806213379,
+          "max": 1845.9892272949219
+        },
+        "token2wav": {
+          "avg": 520.2674269676208,
+          "min": 0.08153915405273438,
+          "max": 3011.997699737549
+        },
+        "total": {
+          "avg": 972.5715219974518,
+          "min": 270.5361843109131,
+          "max": 3303.891181945801
+        }
+      },
+      "unit_total": {
+        "avg": 1068.376213312149,
+        "min": 366.0268783569336,
+        "max": 3400.3281593322754
+      }
+    },
+    "units": [
+      {
+        "video": "compile.mp4",
+        "unit_idx": 0,
+        "num_chunks": 20,
+        "decision": "LISTEN",
+        "prefill": {
+          "vision_process": 5.866050720214844,
+          "vision_embed": 636.7642879486084,
+          "vision_feed": 369.861364364624,
+          "audio_process": 0.9639263153076172,
+          "audio_embed": 11.150598526000977,
+          "audio_feed": 19.395828247070312,
+          "total": 1274.5013236999512
+        },
+        "generate": {
+          "llm": 4415.222883224487,
+          "tts_prep": 0,
+          "tts": 0,
+          "token2wav": 0,
+          "total": 4415.260553359985
+        },
+        "unit_total": 5689.7618770599365
+      },
+      {
+        "video": "compile.mp4",
+        "unit_idx": 1,
+        "num_chunks": 20,
+        "decision": "LISTEN",
+        "prefill": {
+          "vision_process": 5.609989166259766,
+          "vision_embed": 8.655786514282227,
+          "vision_feed": 44.67582702636719,
+          "audio_process": 0.7936954498291016,
+          "audio_embed": 8.159399032592773,
+          "audio_feed": 14.959335327148438,
+          "total": 98.13904762268066
+        },
+        "generate": {
+          "llm": 2.4924278259277344,
+          "tts_prep": 0,
+          "tts": 0,
+          "token2wav": 0,
+          "total": 2.5186538696289062
+        },
+        "unit_total": 100.65770149230957
+      },
+      {
+        "video": "compile.mp4",
+        "unit_idx": 2,
+        "num_chunks": 20,
+        "decision": "SPEAK",
+        "prefill": {
+          "vision_process": 5.915641784667969,
+          "vision_embed": 8.343935012817383,
+          "vision_feed": 43.84303092956543,
+          "audio_process": 0.7345676422119141,
+          "audio_embed": 6.357908248901367,
+          "audio_feed": 14.94288444519043,
+          "total": 95.04961967468262
+        },
+        "generate": {
+          "llm": 68.23945045471191,
+          "tts_prep": 1.528024673461914,
+          "tts": 1845.9892272949219,
+          "token2wav": 0.08153915405273438,
+          "total": 1914.5545959472656
+        },
+        "unit_total": 2009.6042156219482,
+        "text": " There are a"
+      },
+      {
+        "video": "compile.mp4",
+        "unit_idx": 3,
+        "num_chunks": 20,
+        "decision": "SPEAK",
+        "prefill": {
+          "vision_process": 5.692958831787109,
+          "vision_embed": 8.553028106689453,
+          "vision_feed": 44.826507568359375,
+          "audio_process": 0.8444786071777344,
+          "audio_embed": 6.29115104675293,
+          "audio_feed": 14.939308166503906,
+          "total": 96.43697738647461
+        },
+        "generate": {
+          "llm": 119.97079849243164,
+          "tts_prep": 0.5400180816650391,
+          "tts": 171.6911792755127,
+          "token2wav": 3011.997699737549,
+          "total": 3303.891181945801
+        },
+        "unit_total": 3400.3281593322754,
+        "text": " lot of seagulls flying"
+      },
+      {
+        "video": "compile.mp4",
+        "unit_idx": 4,
+        "num_chunks": 20,
+        "decision": "SPEAK",
+        "prefill": {
+          "vision_process": 5.691766738891602,
+          "vision_embed": 8.669853210449219,
+          "vision_feed": 44.67010498046875,
+          "audio_process": 0.9663105010986328,
+          "audio_embed": 6.753206253051758,
+          "audio_feed": 14.967679977416992,
+          "total": 97.20087051391602
+        },
+        "generate": {
+          "llm": 86.05647087097168,
+          "tts_prep": 0.5688667297363281,
+          "tts": 172.70731925964355,
+          "token2wav": 66.99728965759277,
+          "total": 325.88791847229004
+        },
+        "unit_total": 423.08878898620605,
+        "text": " around. They're"
+      },
+      {
+        "video": "compile.mp4",
+        "unit_idx": 5,
+        "num_chunks": 20,
+        "decision": "SPEAK",
+        "prefill": {
+          "vision_process": 5.977153778076172,
+          "vision_embed": 8.59689712524414,
+          "vision_feed": 44.58951950073242,
+          "audio_process": 0.9214878082275391,
+          "audio_embed": 6.645441055297852,
+          "audio_feed": 14.957904815673828,
+          "total": 96.68874740600586
+        },
+        "generate": {
+          "llm": 52.01601982116699,
+          "tts_prep": 0.4665851593017578,
+          "tts": 169.78216171264648,
+          "token2wav": 50.01950263977051,
+          "total": 271.930456161499
+        },
+        "unit_total": 368.6192035675049,
+        "text": " all over"
+      },
+      {
+        "video": "compile.mp4",
+        "unit_idx": 6,
+        "num_chunks": 20,
+        "decision": "SPEAK",
+        "prefill": {
+          "vision_process": 6.0024261474609375,
+          "vision_embed": 8.419513702392578,
+          "vision_feed": 44.20137405395508,
+          "audio_process": 0.9176731109619141,
+          "audio_embed": 6.625175476074219,
+          "audio_feed": 14.380216598510742,
+          "total": 95.1848030090332
+        },
+        "generate": {
+          "llm": 86.03715896606445,
+          "tts_prep": 0.2529621124267578,
+          "tts": 170.50862312316895,
+          "token2wav": 49.025535583496094,
+          "total": 305.675745010376
+        },
+        "unit_total": 400.8605480194092,
+        "text": " the beach. And"
+      },
+      {
+        "video": "compile.mp4",
+        "unit_idx": 7,
+        "num_chunks": 20,
+        "decision": "SPEAK",
+        "prefill": {
+          "vision_process": 6.048440933227539,
+          "vision_embed": 8.391380310058594,
+          "vision_feed": 44.29793357849121,
+          "audio_process": 0.9844303131103516,
+          "audio_embed": 6.2046051025390625,
+          "audio_feed": 14.693498611450195,
+          "total": 95.43657302856445
+        },
+        "generate": {
+          "llm": 102.53572463989258,
+          "tts_prep": 0.492095947265625,
+          "tts": 170.90654373168945,
+          "token2wav": 48.9964485168457,
+          "total": 322.6003646850586
+        },
+        "unit_total": 418.03693771362305,
+        "text": " look, someone's taking"
+      },
+      {
+        "video": "compile.mp4",
+        "unit_idx": 8,
+        "num_chunks": 20,
+        "decision": "SPEAK",
+        "prefill": {
+          "vision_process": 5.784749984741211,
+          "vision_embed": 8.423089981079102,
+          "vision_feed": 44.1744327545166,
+          "audio_process": 1.0180473327636719,
+          "audio_embed": 6.53386116027832,
+          "audio_feed": 14.736413955688477,
+          "total": 95.49069404602051
+        },
+        "generate": {
+          "llm": 52.47950553894043,
+          "tts_prep": 0.247955322265625,
+          "tts": 168.60008239746094,
+          "token2wav": 49.303293228149414,
+          "total": 270.5361843109131
+        },
+        "unit_total": 366.0268783569336,
+        "text": " photos."
+      },
+      {
+        "video": "compile.mp4",
+        "unit_idx": 9,
+        "num_chunks": 20,
+        "decision": "SPEAK",
+        "prefill": {
+          "vision_process": 5.753993988037109,
+          "vision_embed": 8.326292037963867,
+          "vision_feed": 43.503522872924805,
+          "audio_process": 1.0476112365722656,
+          "audio_embed": 6.548881530761719,
+          "audio_feed": 14.816045761108398,
+          "total": 94.94924545288086
+        },
+        "generate": {
+          "llm": 35.80141067504883,
+          "tts_prep": 0.4773139953613281,
+          "tts": 143.5074806213379,
+          "token2wav": 885.7181072235107,
+          "total": 1065.4957294464111
+        },
+        "unit_total": 1160.444974899292
+      }
+    ]
+  }
+}

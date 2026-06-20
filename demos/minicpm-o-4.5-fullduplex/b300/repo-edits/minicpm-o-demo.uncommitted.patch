@@ -1,0 +1,162 @@
+diff --git a/core/processors/pytorch_backend.py b/core/processors/pytorch_backend.py
+index c69bfee..655e364 100644
+--- a/core/processors/pytorch_backend.py
++++ b/core/processors/pytorch_backend.py
+@@ -241,6 +241,17 @@ class PyTorchBackend:
+             return
+         duplex_view = self.processor.set_duplex_mode()
+         duplex_view.config = DuplexConfig(**config)
++        # OMNI: apply chunk_ms to the model so it真正按该粒度跑 (per session)
++        try:
++            _cm = int(duplex_view.config.chunk_ms)
++            _m = duplex_view._model
++            for _obj in (_m, getattr(_m, 'model', None)):
++                if _obj is not None:
++                    setattr(_obj, 'CHUNK_MS', _cm)
++                    setattr(_obj, 'FIRST_CHUNK_MS', _cm + 35)
++            logger.info(f'[duplex] model CHUNK_MS set to {_cm}ms')
++        except Exception as _e:
++            logger.warning(f'set chunk_ms on model failed: {_e}')
+ 
+     def duplex_prepare(
+         self,
+diff --git a/docker/Dockerfile.cpp-worker-backend b/docker/Dockerfile.cpp-worker-backend
+index d06dd58..bbf8633 100644
+--- a/docker/Dockerfile.cpp-worker-backend
++++ b/docker/Dockerfile.cpp-worker-backend
+@@ -8,7 +8,7 @@
+ #
+ # Model weights are mounted at runtime; they are not baked into the image.
+ 
+-ARG CUDA_VERSION=12.8.1
++ARG CUDA_VERSION=13.0.0
+ ARG UBUNTU_VERSION=22.04
+ 
+ FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS cpp-build
+@@ -18,7 +18,7 @@ ARG LLAMA_OMNI_REFSPEC=master
+ ARG LLAMA_OMNI_REF=origin/master
+ ARG LLAMA_OMNI_SERVER_TARGET=llama-omni-server
+ ARG LLAMA_OMNI_SERVER_BIN=llama-omni-server
+-ARG CMAKE_CUDA_ARCHITECTURES=80;120
++ARG CMAKE_CUDA_ARCHITECTURES=100;103
+ 
+ RUN apt-get update && apt-get install -y --no-install-recommends \
+         build-essential \
+diff --git a/docker/Dockerfile.worker-backend b/docker/Dockerfile.worker-backend
+index 0c6c397..ac1db04 100644
+--- a/docker/Dockerfile.worker-backend
++++ b/docker/Dockerfile.worker-backend
+@@ -35,8 +35,8 @@ WORKDIR /app
+ # 6.3G 大头（torch+nvidia+triton），用 BuildKit 缓存挂载，跨 build 复用已下载 wheel。
+ RUN --mount=type=cache,target=/root/.cache/pip \
+     pip install \
+-        --index-url https://download.pytorch.org/whl/cu128 \
+-        torch==2.8.0 torchaudio==2.8.0
++        --index-url https://download.pytorch.org/whl/cu130 \
++        torch==2.9.0 torchaudio==2.9.0
+ 
+ # ---- ② 其余轻依赖（~1G），requirements 变才重跑 ----
+ COPY requirements.txt .
+diff --git a/requirements.txt b/requirements.txt
+index 9be1d18..b0cce94 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -2,6 +2,7 @@
+ # pip install -r requirements.txt
+ 
+ # Core ML
++setuptools<81
+ transformers==4.51.0
+ accelerate==1.12.0
+ safetensors>=0.7.0
+@@ -25,7 +26,7 @@ Pygments>=2.18.0
+ # minicpmo-utils,故在此显式列出。librosa 必须 >=0.10.2 —— 0.9.x 在新 setuptools 下
+ # 因缺 pkg_resources 导入即崩(见历史故障:preset 加载失败 → sys-prompt 入口消失)。
+ PyYAML>=6.0
+-librosa>=0.10.2
++librosa==0.9.0
+ soundfile>=0.12.1
+ 
+ # Data / Schema
+diff --git a/static/omni/omni-app.js b/static/omni/omni-app.js
+index 7c546ba..04c2d83 100644
+--- a/static/omni/omni-app.js
++++ b/static/omni/omni-app.js
+@@ -35,7 +35,8 @@ import { initRefAudio } from '../duplex/ui/ref-audio-init.js';
+ // ============================================================================
+ const SAMPLE_RATE_IN = 16000;
+ const SAMPLE_RATE_OUT = 24000;
+-const CHUNK_MS = 1000;
++let CHUNK_MS = 1000;
++if (typeof window !== 'undefined') window.setChunkMs = (v) => { CHUNK_MS = Math.round(parseFloat(v) * 1000); };
+ // 不在前端做 resize — 直接发摄像头/视频原始分辨率，后端统一处理（scale_resolution=448）
+ 
+ let currentMode = 'live';
+@@ -157,6 +158,7 @@ const settingsPersistence = new SettingsPersistence('omni_settings', [
+     { id: 'playbackDelay', type: 'number' },
+     { id: 'maxKvTokens', type: 'number' },
+     { id: 'omniLengthPenalty', type: 'number' },
++    { id: 'omniListenProbScale', type: 'range' },
+     { id: 'visionHD', type: 'checkbox' },
+     // Fullscreen subtitle
+     { id: 'fsSubHeight', type: 'number' },
+@@ -354,7 +356,7 @@ class LiveMediaProvider extends MediaProvider {
+         this._audioSource = this._audioCtx.createMediaStreamSource(this._audioStream);
+ 
+         this._captureNode = new AudioWorkletNode(this._audioCtx, 'capture-processor', {
+-            processorOptions: { chunkSize: SAMPLE_RATE_IN },
++            processorOptions: { chunkSize: SAMPLE_RATE_IN * CHUNK_MS / 1000 },
+         });
+ 
+         this._audioSource.connect(this._captureNode);
+@@ -631,7 +633,7 @@ class FileMediaProvider extends MediaProvider {
+         this._fileGainNode.gain.value = Math.pow(10, fileTrimDb / 20);
+ 
+         this._captureNode = new AudioWorkletNode(this._micCtx, 'capture-processor', {
+-            processorOptions: { chunkSize: SAMPLE_RATE_IN },
++            processorOptions: { chunkSize: SAMPLE_RATE_IN * CHUNK_MS / 1000 },
+         });
+ 
+         this._micAnalyserNode = this._micCtx.createAnalyser();
+@@ -1595,7 +1597,7 @@ async function startSession() {
+ 
+     // Build prepare payload
+     const preparePayload = {
+-        config: { length_penalty: parseFloat(document.getElementById('omniLengthPenalty').value) || 1.0 },
++        config: { length_penalty: parseFloat(document.getElementById('omniLengthPenalty').value) || 1.0, listen_prob_scale: parseFloat(document.getElementById('omniListenProbScale').value) || 1.0, chunk_ms: CHUNK_MS },
+         max_slice_nums: getEffectiveMaxSliceNums(),
+         use_tts: document.getElementById('ttsEnabled').checked,
+     };
+diff --git a/static/omni/omni.html b/static/omni/omni.html
+index 8170e8e..4530bfc 100644
+--- a/static/omni/omni.html
++++ b/static/omni/omni.html
+@@ -190,6 +190,28 @@
+                 </div>
+             </div>
+         </details>
++        <details class="config-group" open>
++            <summary>Speak / Listen Balance</summary>
++            <div class="cg-body">
++                <div class="cg-row" data-tip="控制模型说话欲望 vs 易被打断：&lt;1 更爱说(难打断)，&gt;1 更克制(易让位)">
++                    <div class="cg-row inline">
++                        <span class="cg-label" style="flex:none;">Listen Prob Scale</span>
++                        <input type="range" id="omniListenProbScale" min="0.2" max="3.0" step="0.1" value="1.0" oninput="document.getElementById('lpsVal').textContent=this.value">
++                        <span id="lpsVal" style="min-width:32px;text-align:center;font-size:12px;">1.0</span>
++                    </div>
++                    <div style="font-size:10px;color:#999;margin-top:2px;">&lt;1 更爱说·难打断　|　1.0 默认　|　&gt;1 更克制·易打断</div>
++                </div>
++            </div>
++        </details>
++        <details class="config-group" open>
++            <summary>Chunk Size · 单元时长/延迟</summary>
++            <div class="cg-body">
++                <div class="cg-row" data-tip="每个决策单元时长(秒)。越小延迟越低，但模型按1.0s训练，过小会变笨/卡顿。会话开始时生效，需重开会话。">
++                    <span class="cg-label" style="flex:none;">Chunk (s)</span>
++                    <select class="cg-select" id="chunkSizeSel" onchange="setChunkMs(this.value)"><option value="0.1">0.1</option><option value="0.2">0.2</option><option value="0.3">0.3</option><option value="0.4">0.4</option><option value="0.5">0.5</option><option value="0.6">0.6</option><option value="0.7">0.7</option><option value="0.8">0.8</option><option value="0.9">0.9</option><option value="1" selected>1.0 (默认/推荐)</option></select>
++                </div>
++            </div>
++        </details>
+         <details class="config-group" open>
+             <summary>Vision Settings</summary>
+             <div class="cg-body">
