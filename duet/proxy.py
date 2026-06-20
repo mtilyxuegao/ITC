@@ -54,14 +54,10 @@ def _condense(text: str, limit: int = 220) -> str:
 # ("model抢答"): the frozen model can't be trained to emit [THINK], but it largely
 # follows a system instruction to stop and let the backend answer.
 DEFER_PROMPT = (
-    " CRITICAL RULE: You are the voice front-end of a system with a research backend. "
-    "For ANY question about prices, real-time data, statistics, current events, or "
-    "specific facts: you MUST NOT state any number, price, name, or fact yourself — not "
-    "even an estimate or a guess, even if you believe you know it. Instead say ONLY a "
-    "brief acknowledgement such as \"Sure, let me check that for you.\" (or \"好的，我查一下\") "
-    "and then STOP and stay quiet. The backend finds the real answer. When you later hear a "
-    "spoken note beginning with \"Answer:\", read THAT answer to the user in one short "
-    "natural sentence. Only answer directly for casual small talk (greetings, how are you)."
+    " Rule: for any factual or real-time question (prices, data, news, facts), do NOT state "
+    "any number or fact yourself — just say a brief \"Sure, let me check.\" and wait. When you "
+    "later hear a note starting with \"Answer:\", say that answer in one short sentence. "
+    "Chat normally for small talk."
 )
 
 # The model emitting one of these phrases IS its [THINK] signal — that's when (and only
@@ -76,6 +72,9 @@ GATEWAY = os.environ.get("MINICPM_GATEWAY", "http://liquid-gpu-053:8006").rstrip
 QWEN_URL = os.environ.get("QWEN_URL", "http://liquid-gpu-001:8001").rstrip("/")
 ASR_URL = os.environ.get("ASR_URL", "http://liquid-gpu-060:8020").rstrip("/")
 MODEL = os.environ.get("THINKER_MODEL", "qwen")
+# Aux model (router + spokenify) — offload to gemma so Qwen's GPUs stay free for research.
+AUX_URL = os.environ.get("AUX_URL", QWEN_URL).rstrip("/")
+AUX_MODEL = os.environ.get("AUX_MODEL", MODEL)
 PORT = int(os.environ.get("PROXY_PORT", "8010"))
 TOOLSETS = [t for t in os.environ.get("HERMES_TOOLSETS", "").split(",") if t]
 MAXMSG = 128 * 1024 * 1024  # match MiniCPM gateway's bumped WS payload limit
@@ -133,7 +132,7 @@ class Hub:
         """Rewrite the verbose RESULT into one short, TTS/ASR-robust spoken sentence.
         The write-back goes TTS -> MiniCPM ASR -> voice, which mangles '$210.33'-style
         numbers; plain rounded words survive the round-trip."""
-        payload = {"model": MODEL, "stream": False, "max_tokens": 64, "temperature": 0,
+        payload = {"model": AUX_MODEL, "stream": False, "max_tokens": 64, "temperature": 0,
                    "chat_template_kwargs": {"enable_thinking": False},
                    "messages": [
                        {"role": "system", "content":
@@ -144,7 +143,7 @@ class Hub:
                        {"role": "user", "content": text[:600]}]}
         try:
             async with aiohttp.ClientSession() as s:
-                async with s.post(QWEN_URL + "/v1/chat/completions", json=payload,
+                async with s.post(AUX_URL + "/v1/chat/completions", json=payload,
                                   timeout=aiohttp.ClientTimeout(total=20)) as r:
                     d = await r.json()
             out = (d["choices"][0]["message"]["content"] or "").strip()
@@ -181,7 +180,7 @@ class Hub:
         like 'I mean the stock price' or 'just the nvidia one' using recent context, and
         fixing obvious STT errors) into ONE standalone web query, or NONE for chit-chat."""
         ctx = " | ".join(context[-5:]) if context else "(none)"
-        payload = {"model": MODEL, "stream": False, "max_tokens": 64, "temperature": 0,
+        payload = {"model": AUX_MODEL, "stream": False, "max_tokens": 64, "temperature": 0,
                    # Qwen3.5 is a reasoning model; without this it burns all tokens on
                    # <think> and returns content=null. Routing needs no reasoning.
                    "chat_template_kwargs": {"enable_thinking": False},
@@ -197,7 +196,7 @@ class Hub:
                        {"role": "user", "content": f"Recent turns: {ctx}\nLatest: {transcript}"}]}
         try:
             async with aiohttp.ClientSession() as s:
-                async with s.post(QWEN_URL + "/v1/chat/completions", json=payload,
+                async with s.post(AUX_URL + "/v1/chat/completions", json=payload,
                                   timeout=aiohttp.ClientTimeout(total=20)) as r:
                     d = await r.json()
             out = (d["choices"][0]["message"]["content"] or "").strip()
