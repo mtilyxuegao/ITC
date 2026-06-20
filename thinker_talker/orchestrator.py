@@ -36,9 +36,13 @@ class Orchestrator:
         self._stop = asyncio.Event()
         self._tlog_path = cfg.transcript_log_path or ""
         self._last_thought_ctx = None  # 去重:上下文没变就不重复打扰大模型
-        self._audio_buf = bytearray()  # 用户上行音频(float32 16k),供 ASR
+        # ASR 按句切分(能量 VAD):说话累积,停顿后整句转一次
+        self._utt_buf = bytearray()
+        self._utt_has_speech = False
+        self._last_voice_ts = 0.0
         self._last_user_text = ""
         self._asr_enabled = bool(cfg.openai_api_key)
+        self._last_action_ts = 0.0  # INJECT/CUT 冷却
 
     def _tlog(self, tag: str, text: str) -> None:
         """把一条对话/决策写进 conversation log(便于核对大模型是否真被调用)。"""
@@ -80,13 +84,7 @@ class Orchestrator:
                     self.arbiter.release()
                 self.state.talker_state = TalkerState.LISTENING
             elif ev.kind == "user_audio" and ev.audio_b64:
-                try:
-                    self._audio_buf += base64.b64decode(ev.audio_b64)
-                except Exception:
-                    pass
-                maxb = 12 * 16000 * 4  # 只留最近 ~12s
-                if len(self._audio_buf) > maxb:
-                    del self._audio_buf[:-maxb]
+                self._on_user_audio(ev.audio_b64)
             elif ev.kind == "closed":
                 break
         self._stop.set()
@@ -164,6 +162,10 @@ class Orchestrator:
             if self.cfg.inject_wait_for_gap and not self.arbiter.can_inject():
                 logger.info("inject deferred (floor=%s)", self.state.floor.value)
                 return
+            if time.time() - self._last_action_ts < 5.0:  # 冷却:别连续插话刷屏
+                self._tlog("大模型·抑制", f"INJECT 冷却中,跳过: {d.text}")
+                return
+            self._last_action_ts = time.time()
             self.arbiter.take(Floor.THINKER)
             await self.talker.force_speak(d.text)
             self._tlog("→小模型说出(INJECT)", d.text)
@@ -175,6 +177,9 @@ class Orchestrator:
         if d.action is Action.CUT:
             if not self._cut_allowed(d):
                 return
+            if time.time() - self._last_action_ts < 2.0:  # CUT 冷却(比 INJECT 短,更急)
+                return
+            self._last_action_ts = time.time()
             self.arbiter.take(Floor.THINKER)
             # 路线2(force_speak)直接让模型说 redirect;不加 [CUT] 前缀(那是已弃用的
             # system-prompt 软触发方案,否则模型会把"[CUT]"当文本念出来)。
@@ -197,21 +202,50 @@ class Orchestrator:
             return False
         return True
 
+    def _on_user_audio(self, audio_b64: str) -> None:
+        """每个上行音频块:算能量,做语音/静音判断,累积当前这句。"""
+        import array
+        try:
+            raw = base64.b64decode(audio_b64)
+        except Exception:
+            return
+        f = array.array("f")
+        f.frombytes(raw[: (len(raw) // 4) * 4])
+        if not len(f):
+            return
+        rms = (sum(x * x for x in f) / len(f)) ** 0.5
+        now = time.time()
+        if rms > 0.012:  # 有人声
+            self._utt_has_speech = True
+            self._last_voice_ts = now
+            self._utt_buf += raw
+        elif self._utt_has_speech:
+            self._utt_buf += raw  # 句中短停顿也先收着
+        # 句子过长(>15s)强制收尾由 asr_loop 处理
+
     async def asr_loop(self) -> None:
-        """周期性把最近的用户上行音频转写成文字,作为'用户'轮次喂给大模型。"""
+        """按句切分:说话停顿 ~0.8s 后,把整句转写一次,作为'用户'轮次喂给大模型。"""
         if not self._asr_enabled:
             logger.info("ASR 关闭(无 OpenAI key)")
             return
         import aiohttp
         async with aiohttp.ClientSession() as s:
             while not self._stop.is_set():
-                await asyncio.sleep(2.5)
-                buf = bytes(self._audio_buf)
-                if len(buf) < 16000 * 4:  # < 1s
+                await asyncio.sleep(0.3)
+                now = time.time()
+                buf_len = len(self._utt_buf)
+                if not self._utt_has_speech or buf_len < 16000 * 4 // 2:  # 没语音或<0.5s
                     continue
+                ended = (now - self._last_voice_ts) > 0.8  # 停顿即句尾
+                too_long = buf_len > 15 * 16000 * 4
+                if not (ended or too_long):
+                    continue
+                buf = bytes(self._utt_buf)
+                self._utt_buf = bytearray()  # 收尾,清空
+                self._utt_has_speech = False
                 text = await transcribe(s, self.cfg.openai_api_key, buf,
                                         base_url=self.cfg.openai_base_url)
-                if text and text != self._last_user_text and len(text) >= 2:
+                if text and len(text) >= 2 and text != self._last_user_text:
                     self._last_user_text = text
                     self.state.add_turn("user", text)
                     self._tlog("用户(ASR)", text)
