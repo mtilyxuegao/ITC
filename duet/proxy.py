@@ -152,7 +152,7 @@ class Hub:
         if on:
             tok = self._gate_token
             async def _failsafe():
-                await asyncio.sleep(25)
+                await asyncio.sleep(8)   # research completes in <7s; never strand the model muted
                 if self._gate_token == tok and self.active_gate is not None:
                     self.active_gate["force_listen"] = False
                     print("[duet] force_listen failsafe-cleared (research timeout)", flush=True)
@@ -401,6 +401,13 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
                     print(f"[duet] content-gate: muted on fact-token in {buf[:48]!r}", flush=True)
         elif t == "response.output.delta" and kind == "listen":
             state["speaking"] = False
+            # Self-recovery: if the model is just listening and we are NOT mid-research, the gate
+            # has no reason to stay set — release it so a stuck force_listen can never strand the
+            # model muted ("can't continue" after an interrupt). During research the conductor is
+            # THINKING, so the anti-抢答 mute is preserved.
+            if state["force_listen"] and hub.conductor.phase != Phase.THINKING:
+                state["force_listen"] = False
+                print("[duet] gate released on listen (not researching)", flush=True)
 
     try:
         async with session.ws_connect(up_url, max_msg_size=MAXMSG, heartbeat=30) as up:
