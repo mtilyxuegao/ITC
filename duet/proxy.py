@@ -107,6 +107,8 @@ class Hub:
         self.active_gate = None        # per-connection state dict (drives force_listen)
         self._gate_token = 0           # invalidates stale force_listen failsafe timers
         self._t_dispatch = 0.0         # loop time at dispatch, for answer-latency timing
+        self._cue_epoch = 0            # epoch whose progress-cue already fired (once per research)
+        self._result_epoch = 0         # latest epoch a RESULT was seen for (suppress a late cue)
         self.session = None            # shared aiohttp session (set at startup; pooled keep-alive)
         self.recent: list[str] = []    # recent STT transcripts (context for the router)
         self.log = EventLog()
@@ -123,8 +125,20 @@ class Hub:
                 q.put_nowait(data)
             except Exception:
                 pass
-        if ev.kind == Kind.RESULT and ev.text:      # write the answer back into the model's voice
-            asyncio.create_task(self._voice_back(ev.text))
+        if ev.kind == Kind.RESULT:
+            self._result_epoch = max(self._result_epoch, ev.epoch)   # block any late cue for this epoch
+            if ev.text:                              # write the answer back into the model's voice
+                asyncio.create_task(self._voice_back(ev.text))
+        elif ev.kind == Kind.MILESTONE:
+            # FIRST milestone of a fresh, still-current research epoch -> voice a fixed progress cue
+            # so the decoupling is AUDIBLE and the research dead-air is filled. Guards: once per epoch
+            # (_cue_epoch), only the current epoch (not a stale/[WAIT]'d one), still THINKING, and no
+            # RESULT already seen for it (_result_epoch).
+            cur = self.conductor.epoch.current
+            if (ev.epoch == cur and ev.epoch > self._cue_epoch and ev.epoch > self._result_epoch
+                    and self.conductor.phase == Phase.THINKING):
+                self._cue_epoch = ev.epoch
+                asyncio.create_task(self._voice_cue(ev.epoch))
 
     def reset(self) -> None:
         """Clear backend conversation history (fresh slate per session)."""
@@ -183,6 +197,43 @@ class Hub:
             print(f"[duet] spokenify error: {e}", flush=True)
             return _condense(text)
 
+    # Fixed canned cue — NEVER model output, so it can't garble through the decoder/TTS.
+    CUE_TEXT = "Let me look that up."
+    # Time the cue needs to be spoken before we re-mute; re-muting earlier feeds <|turn_eos|>
+    # and clips the cue. ~5 words of TTS speech finishes well under this.
+    CUE_SPEAK_SECS = float(os.environ.get("CUE_SPEAK_SECS", "2.5"))
+
+    async def _voice_cue(self, epoch: int) -> None:
+        """Voice a FIXED progress cue at the start of a research epoch via the SAME direct
+        control.force_speak path as _voice_back. The model is muted (force_listen) during
+        research, so clear the gate FIRST or the next browser input.append re-mutes mid-cue
+        and clips it; then RE-MUTE after the cue is spoken so anti-抢答 is restored. The re-mute
+        is guarded (epoch+phase+_result_epoch+same-connection) so a RESULT or newer dispatch
+        during the cue is never clobbered — no double-talk, no stranded mute."""
+        up = self.active_up
+        if up is None or getattr(up, "closed", True):
+            return
+        if (self.conductor.phase != Phase.THINKING or epoch != self.conductor.epoch.current
+                or epoch <= self._result_epoch):
+            return
+        self._set_listen_gate(False)                 # release the model BEFORE forcing the cue
+        gate = self.active_gate                       # snapshot the connection we cleared
+        try:
+            await up.send_str(json.dumps(
+                {"type": "control.force_speak", "payload": {"text": self.CUE_TEXT}},
+                ensure_ascii=False))
+            print(f"[duet] cue force_speak (epoch {epoch}) -> {self.CUE_TEXT!r}", flush=True)
+        except Exception as e:
+            print(f"[duet] cue force_speak failed: {e}", flush=True)
+            return
+        await asyncio.sleep(self.CUE_SPEAK_SECS)
+        if (self.active_gate is gate and gate is not None
+                and self.conductor.phase == Phase.THINKING
+                and epoch == self.conductor.epoch.current
+                and epoch > self._result_epoch):
+            gate["force_listen"] = True
+            print(f"[duet] cue done -> re-muted (epoch {epoch})", flush=True)
+
     async def _voice_back(self, text: str) -> None:
         """Make the duplex model speak the answer VERBATIM via a force_speak text
         injection (teacher-forced into the decoder, then TTS-rendered). Replaces the
@@ -215,11 +266,20 @@ class Hub:
 
     # called when the model finishes a turn: its (defer-prompted) text RESTATES the
     # user's question. We dispatch the thinking layer on that clean restatement.
-    async def _route(self, transcript: str, context: list):
-        """Context-aware query builder: resolve the LATEST turn (handling corrections
-        like 'I mean the stock price' or 'just the nvidia one' using recent context, and
-        fixing obvious STT errors) into ONE standalone web query, or NONE for chit-chat."""
+    async def _route(self, transcript: str, context: list, frame_b64: str | None = None):
+        """Context-aware query builder: resolve the LATEST turn into ONE standalone web query,
+        or NONE for chit-chat. If a camera frame_b64 (JPEG, no data: prefix) is given, attach it
+        to the gemma (vision-enabled, AUX_MODEL) call so deictic turns ('what is THIS', 'how much
+        does this cost') are grounded in what the user is pointing at. Async path only."""
         ctx = " | ".join(context[-5:]) if context else "(none)"
+        user_text = f"Recent turns: {ctx}\nLatest: {transcript}"
+        if frame_b64:
+            user_content = [
+                {"type": "text", "text": user_text},
+                {"type": "image_url",
+                 "image_url": {"url": "data:image/jpeg;base64," + frame_b64}}]
+        else:
+            user_content = user_text
         payload = {"model": AUX_MODEL, "stream": False, "max_tokens": 64, "temperature": 0,
                    # Qwen3.5 is a reasoning model; without this it burns all tokens on
                    # <think> and returns content=null. Routing needs no reasoning.
@@ -232,11 +292,15 @@ class Hub:
                         "(e.g. 'I mean the stock price', 'just the nvidia one') using context; "
                         "(2) fix obvious speech-to-text errors (e.g. 'store'->'stock'); (3) if "
                         "the latest asks for MULTIPLE things (e.g. 'weather in SF and the nvidia "
-                        "stock price'), keep them BOTH in one query — do NOT drop it. Output the "
+                        "stock price'), keep them BOTH in one query — do NOT drop it; (4) if an "
+                        "IMAGE is attached and the latest uses a pointing word ('this', 'that', "
+                        "'here', 'it') with no clear referent, IDENTIFY the main object in the "
+                        "image and put its concrete name in the query (e.g. with a power bank in "
+                        "view, 'how much does this cost' -> 'Anker power bank price'). Output the "
                         "query for ANY question or information request, however casual. Output "
                         "exactly NONE ONLY when the latest is purely a greeting, thanks, "
                         "acknowledgement, or filler with literally no question in it."},
-                       {"role": "user", "content": f"Recent turns: {ctx}\nLatest: {transcript}"}]}
+                       {"role": "user", "content": user_content}]}
         try:
             async with self.session.post(AUX_URL + "/v1/chat/completions", json=payload,
                                           timeout=aiohttp.ClientTimeout(total=20)) as r:
@@ -261,7 +325,7 @@ class Hub:
             print(f"[duet] ASR error: {e}", flush=True)
             return ""
 
-    async def on_user_audio(self, pcm: bytes) -> None:
+    async def on_user_audio(self, pcm: bytes, frame_b64: str | None = None) -> None:
         """User's turn ended: STT -> noise filter -> semantic gate -> dispatch.
         STT is noisy (hallucinated text on silence/echo), so we (1) drop short
         fragments and (2) require the router to confirm a clear info request."""
@@ -277,7 +341,7 @@ class Hub:
         self.recent.append(transcript)
         del self.recent[:-6]
         _t1 = loop.time()
-        query = await self._route(transcript, self.recent)   # context-aware query / None
+        query = await self._route(transcript, self.recent, frame_b64)   # vision-grounded if a frame
         _ms_route = (loop.time() - _t1) * 1000
         if not query:
             self._set_listen_gate(False)          # chit-chat -> release the optimistic mute
@@ -340,7 +404,7 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
 
     loop = asyncio.get_event_loop()
     user_pcm = bytearray()       # USER mic audio this turn (16kHz mono f32), echo-free
-    state = {"speaking": False, "force_listen": False, "last_audio_t": 0.0}
+    state = {"speaking": False, "force_listen": False, "last_audio_t": 0.0, "last_frame": None}
     _seen: set = set()
 
     def rewrite_client(data):
@@ -362,13 +426,17 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
             return json.dumps(msg, ensure_ascii=False)
         if t == "input.append":
             if not state["speaking"]:
-                a = (msg.get("input") or {}).get("audio")
+                inp = msg.get("input") or {}
+                a = inp.get("audio")
                 if a:
                     try:
                         user_pcm.extend(base64.b64decode(a))
                         state["last_audio_t"] = loop.time()   # for silence-based turn detection
                     except Exception:
                         pass
+                vf = inp.get("video_frames")              # MiniCPM omni sends camera frames here;
+                if vf:
+                    state["last_frame"] = vf[-1]          # keep the latest for the vision router
             if state["force_listen"]:        # anti-抢答: force the model to keep listening
                 msg.setdefault("input", {})["force_listen"] = True
                 return json.dumps(msg, ensure_ascii=False)
@@ -445,11 +513,12 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
                         continue
                     if len(user_pcm) > int(16000 * 4 * 0.3) and (loop.time() - state["last_audio_t"]) > 0.6:
                         pcm = bytes(user_pcm); user_pcm.clear()
+                        frame = state["last_frame"]              # latest camera frame this turn (or None)
                         async def _arm(st=state):                # anti-抢答 mute after a short ack grace
                             await asyncio.sleep(GATE_DELAY)
                             st["force_listen"] = True
                         asyncio.create_task(_arm())
-                        asyncio.create_task(hub.on_user_audio(pcm))
+                        asyncio.create_task(hub.on_user_audio(pcm, frame))
 
             sd = asyncio.create_task(silence_dispatcher())
             try:
