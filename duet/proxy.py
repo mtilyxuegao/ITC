@@ -287,9 +287,25 @@ class Hub:
         self._t_dispatch = loop.time()            # for end-to-end answer-latency timing in _voice_back
         print(f"[duet] DISPATCH (route {_ms_route:.0f}ms) -> {query!r}", flush=True)
         self._set_listen_gate(True)               # mute the model during research (anti-抢答)
+        tok = self._gate_token                    # to release this mute the instant research ENDS
         if self.conductor.phase == Phase.THINKING:
             await self.conductor.on_interrupt()   # new turn supersedes -> [WAIT]
         await self.conductor.on_user_utterance(query)
+        think = self.conductor._think_task
+        if think is not None:
+            async def _release_when_done(task=think, tk=tok):
+                try:
+                    await task
+                except Exception:
+                    pass
+                # research ended — success voices via _voice_back (which bumps the token, so this
+                # is then a no-op); this covers the fail/empty/cancel path so the model un-mutes
+                # immediately instead of waiting out the 8s failsafe. Token guard = don't clobber
+                # a newer dispatch's mute.
+                if self._gate_token == tk and self.active_gate is not None and self.active_gate.get("force_listen"):
+                    self.active_gate["force_listen"] = False
+                    print("[duet] gate released (research ended)", flush=True)
+            asyncio.create_task(_release_when_done())
 
 
 async def proxy_http(request: web.Request) -> web.StreamResponse:
@@ -323,8 +339,9 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
     if request.query_string:
         up_url += "?" + request.query_string
 
+    loop = asyncio.get_event_loop()
     user_pcm = bytearray()       # USER mic audio this turn (16kHz mono f32), echo-free
-    state = {"speaking": False, "force_listen": False}
+    state = {"speaking": False, "force_listen": False, "last_audio_t": 0.0}
     _seen: set = set()
 
     def rewrite_client(data):
@@ -350,6 +367,7 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
                 if a:
                     try:
                         user_pcm.extend(base64.b64decode(a))
+                        state["last_audio_t"] = loop.time()   # for silence-based turn detection
                     except Exception:
                         pass
             if state["force_listen"]:        # anti-抢答: force the model to keep listening
@@ -377,18 +395,6 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
             if not state["speaking"]:
                 state["speaking"] = True
                 state["spoke_text"] = ""              # per-turn buffer of the model's spoken words
-                pcm = bytes(user_pcm); user_pcm.clear()
-                if len(pcm) > int(16000 * 4 * 0.3):   # >~0.3s of f32 audio = a real user turn
-                    # Arm the anti-抢答 mute after GATE_DELAY so the model's brief ack
-                    # ("Sure, let me check") finishes instead of clipping mid-word, while still
-                    # cutting a hallucinated FACT (which comes only AFTER the ack). STT+route
-                    # (~2-3s) finishes after the arm, then on_user_audio keeps the mute for a
-                    # research turn or releases it for chit-chat.
-                    async def _arm_gate(st=state):
-                        await asyncio.sleep(GATE_DELAY)
-                        st["force_listen"] = True
-                    asyncio.create_task(_arm_gate())
-                    asyncio.create_task(hub.on_user_audio(pcm))
             # CONTENT-BASED anti-抢答 gate (additive to the GATE_DELAY timer): the kind=text
             # delta carries the spoken words BEFORE that chunk's audio. The instant a FACT token
             # (digit / $ % °) appears past the short ack, mute — cutting a hallucinated number/price
@@ -430,7 +436,27 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
                         await client.send_bytes(m.data)
                 await client.close()
 
-            await asyncio.gather(c2u(), u2c())
+            async def silence_dispatcher():
+                # Turn-end = the USER paused (silence), NOT the model starting to speak — so a
+                # muted/silent model can never stall turn detection ("can't continue after interrupt").
+                # On a >0.6s pause after >=0.3s of speech, grab the turn, arm the anti-抢答 mute, dispatch.
+                while True:
+                    await asyncio.sleep(0.15)
+                    if state["speaking"]:
+                        continue
+                    if len(user_pcm) > int(16000 * 4 * 0.3) and (loop.time() - state["last_audio_t"]) > 0.6:
+                        pcm = bytes(user_pcm); user_pcm.clear()
+                        async def _arm(st=state):                # anti-抢答 mute after a short ack grace
+                            await asyncio.sleep(GATE_DELAY)
+                            st["force_listen"] = True
+                        asyncio.create_task(_arm())
+                        asyncio.create_task(hub.on_user_audio(pcm))
+
+            sd = asyncio.create_task(silence_dispatcher())
+            try:
+                await asyncio.gather(c2u(), u2c())
+            finally:
+                sd.cancel()
     except Exception:
         if not client.closed:
             await client.close()
