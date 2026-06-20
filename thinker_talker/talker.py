@@ -101,3 +101,83 @@ class TalkerClient:
                     end_of_turn=(kind == "listen"),
                     raw=msg,
                 )
+
+
+class GatewayObserver:
+    """旁路监听一个**已存在**的浏览器↔worker 会话(经 gateway 的 /observer 钩子)。
+
+    与 TalkerClient(自己当客户端驱动会话)不同,这个不占用会话,而是:
+      - 通过 GET  {base}/observer/sessions 发现活跃会话
+      - 连    WS   {base}/observer/{sid} 收 text/listen 镜像
+      - 发 control.force_speak → gateway 注入该会话的 worker(实现 AI 主动打断)
+    实测路径见 tests/e2e_observer.py。与 Orchestrator 的事件接口一致(events()/force_speak())。
+    """
+
+    def __init__(self, base_url: str, session_id: Optional[str] = None, insecure: bool = True):
+        # base_url 形如 https://localhost:8006
+        self.base = base_url.rstrip("/")
+        self.session_id = session_id
+        self._ssl = None
+        if base_url.startswith("https"):
+            import ssl
+            self._ssl = ssl._create_unverified_context() if insecure else ssl.create_default_context()
+        self._ws = None
+        self._send_lock = asyncio.Lock()
+
+    def _ws_url(self, path: str) -> str:
+        return self.base.replace("http", "ws", 1) + path
+
+    async def discover_session(self, timeout_s: float = 30.0) -> Optional[str]:
+        import aiohttp
+        deadline = timeout_s
+        async with aiohttp.ClientSession() as s:
+            while deadline > 0:
+                try:
+                    async with s.get(self.base + "/observer/sessions", ssl=self._ssl) as r:
+                        data = await r.json()
+                        sessions = data.get("sessions") or []
+                        if sessions:
+                            return sessions[-1]
+                except Exception:
+                    pass
+                await asyncio.sleep(1.0)
+                deadline -= 1.0
+        return None
+
+    async def connect(self) -> None:
+        if self.session_id is None:
+            self.session_id = await self.discover_session()
+        if self.session_id is None:
+            raise RuntimeError("no active session to observe")
+        self._ws = await websockets.connect(self._ws_url(f"/observer/{self.session_id}"),
+                                             ssl=self._ssl, max_size=None)
+        logger.info("observing session %s", self.session_id)
+
+    async def close(self) -> None:
+        if self._ws is not None:
+            await self._ws.close()
+            self._ws = None
+
+    async def force_speak(self, text: str, input_id: Optional[str] = None) -> None:
+        if self._ws is None:
+            raise RuntimeError("observer not connected")
+        async with self._send_lock:
+            await self._ws.send(json.dumps({"type": "control.force_speak", "payload": {"text": text}}))
+        logger.info("force_speak -> %r", text[:60])
+
+    async def events(self):
+        if self._ws is None:
+            raise RuntimeError("observer not connected")
+        async for raw in self._ws:
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("type") == "response.output.delta":
+                kind = msg.get("kind")
+                yield TalkerEvent(kind=kind or "unknown", text=msg.get("text", "") or "",
+                                  audio_b64=msg.get("audio"), response_id=msg.get("response_id"),
+                                  end_of_turn=(kind == "listen"), raw=msg)
+            elif msg.get("type") == "session.closed":
+                yield TalkerEvent("closed", raw=msg)
+                break

@@ -1,4 +1,21 @@
-# patches · 把 force_speak 集成进 MiniCPM-o demo
+# patches · 把 Talker–Thinker 集成进 MiniCPM-o demo
+
+> ✅ **已在 2×H100 实测打通**:
+> - (a) `control.force_speak` → 模型出声(~3s 音频),见 `tests/smoke_force_speak.py`
+> - (b) 旁路监听 + 注入:observer 发现活跃会话 → 注入 force_speak → 浏览器收到音频,见 `tests/e2e_observer.py`
+>
+> 两个集成器(都幂等、可 `--revert`、自动备份 `*.tt.bak`):
+> - `integrate_force_speak.py` —— 改 `py_backend/server.py`(分发+处理函数)、`worker.py`(放行
+>   control.force_speak)、`runtime/backend_client.py`(`send_raw`),并复制 `minicpm_ext/`。**改 worker 镜像后需重建 worker。**
+> - `integrate_observer.py` —— 改 `gateway.py`(register/publish/unregister 钩子 + 顶层 `/observer` 路由)。**改后需重建 gateway。**
+>
+> ⚠️ 关键经验:① server.py 处理函数必须插在 `def main()` **之前**(EOF 在 uvicorn 阻塞后永不执行);
+> ② `/observer` 路由必须是**模块级 `@app.websocket` 装饰器**(放进函数里 install 会被 FastAPI 拒成 403);
+> ③ force_speak 真身挂 `DuplexCapability`,`MiniCPMO` 上挂委托。
+
+---
+
+# force_speak 集成细节
 
 为实现 AI 主动打断(CUT 的"路线 2"),需要给 demo 的小模型加一条 `duplex_force_speak` 路径。
 真正的实现代码在 **本仓库** `thinker_talker/model_ext/force_speak.py`(版本受控);

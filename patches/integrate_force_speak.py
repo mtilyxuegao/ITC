@@ -88,6 +88,43 @@ async def _tt_handle_force_speak(session, message) -> None:
 '''
 
 
+# --- worker.py:让 :22400 转发层放行 control.force_speak,转发到 backend ---
+WORKER_ANCHOR = (
+    "                if msg_type == \"input.append\":\n"
+    "                    await runtime.push(_input_payload(msg))\n"
+    "                    continue"
+)
+WORKER_REP = WORKER_ANCHOR + (
+    "\n\n                if msg_type == \"control.force_speak\":  # " + MARKER + "\n"
+    "                    await runtime.backend.send_raw(msg)\n"
+    "                    continue"
+)
+
+# --- runtime/backend_client.py:RemoteBackendSession 加 send_raw,把原样消息发给 backend ---
+BC_ANCHOR = "    async def push(self, input_payload: Dict[str, Any]) -> None:"
+BC_REP = (
+    "    async def send_raw(self, message: Dict[str, Any]) -> None:  # " + MARKER + "\n"
+    "        if self._ws is None or self._closed:\n"
+    "            raise RuntimeError(\"backend session is not active\")\n"
+    "        await self._ws.send(json.dumps(message))\n\n"
+) + BC_ANCHOR
+
+
+def _patch_file(path: str, anchor: str, replacement: str) -> str:
+    """幂等地把 anchor 替换为 replacement;已含 MARKER 则跳过。返回状态串。"""
+    if not os.path.isfile(path):
+        return f"缺文件 {path}(跳过)"
+    src = open(path, encoding="utf-8").read()
+    if MARKER in src:
+        return f"{os.path.basename(path)} 已集成,跳过"
+    if anchor not in src:
+        return f"⚠ {os.path.basename(path)} 锚点未命中(跳过)"
+    if not os.path.exists(path + ".tt.bak"):
+        shutil.copy(path, path + ".tt.bak")
+    open(path, "w", encoding="utf-8").write(src.replace(anchor, replacement, 1))
+    return f"{os.path.basename(path)} 集成完成"
+
+
 def _server_path(demo: str) -> str:
     return os.path.join(demo, "py_backend", "server.py")
 
@@ -122,32 +159,35 @@ def apply(demo: str) -> None:
     src = open(sp, encoding="utf-8").read()
     if MARKER in src:
         print("[server.py] 已集成,跳过")
-        return
-    if not os.path.exists(sp + ".tt.bak"):
-        shutil.copy(sp, sp + ".tt.bak")
-        print(f"[backup] {sp}.tt.bak")
-    src = src.replace(DISPATCH_ANCHOR, DISPATCH_REPLACEMENT, 1)
-    # 必须插在 def main() 之前:server.py 以 `if __name__ == "__main__": main()` 结尾,
-    # main() 启动 uvicorn 会阻塞,EOF 之后的定义永远不会在 import 时执行。
-    main_anchor = "\ndef main() -> None:\n"
-    if main_anchor in src:
-        src = src.replace(main_anchor, "\n" + APPEND_BLOCK.strip("\n") + "\n\n" + main_anchor, 1)
     else:
-        src = src.rstrip("\n") + "\n" + APPEND_BLOCK  # 回退(不应发生)
-    open(sp, "w", encoding="utf-8").write(src)
-    print("[server.py] 集成完成(分发分支 + 处理函数,插在 main() 之前)")
+        if not os.path.exists(sp + ".tt.bak"):
+            shutil.copy(sp, sp + ".tt.bak")
+            print(f"[backup] {sp}.tt.bak")
+        src = src.replace(DISPATCH_ANCHOR, DISPATCH_REPLACEMENT, 1)
+        # 必须插在 def main() 之前:server.py 以 `if __name__ == "__main__": main()` 结尾,
+        # main() 启动 uvicorn 会阻塞,EOF 之后的定义永远不会在 import 时执行。
+        main_anchor = "\ndef main() -> None:\n"
+        if main_anchor in src:
+            src = src.replace(main_anchor, "\n" + APPEND_BLOCK.strip("\n") + "\n\n" + main_anchor, 1)
+        else:
+            src = src.rstrip("\n") + "\n" + APPEND_BLOCK  # 回退(不应发生)
+        open(sp, "w", encoding="utf-8").write(src)
+        print("[server.py] 集成完成(分发分支 + 处理函数,插在 main() 之前)")
+
+    # 3. 让 force_speak 走通公网路径:worker.py 转发层 + runtime backend 客户端
+    print("[worker.py]", _patch_file(os.path.join(demo, "worker.py"), WORKER_ANCHOR, WORKER_REP))
+    print("[backend_client.py]", _patch_file(os.path.join(demo, "runtime", "backend_client.py"), BC_ANCHOR, BC_REP))
     print("\n✅ 完成。让改动生效:重建 worker 镜像或挂载改动文件(见 patches/README.md)。")
 
 
 def revert(demo: str) -> None:
-    sp = _server_path(demo)
-    bak = sp + ".tt.bak"
-    if os.path.exists(bak):
-        shutil.copy(bak, sp)
-        os.remove(bak)
-        print(f"[revert] 恢复 {sp}")
-    else:
-        print("[revert] 没有备份,跳过 server.py")
+    for rel in ("py_backend/server.py", "worker.py", "runtime/backend_client.py"):
+        p = os.path.join(demo, rel)
+        bak = p + ".tt.bak"
+        if os.path.exists(bak):
+            shutil.copy(bak, p)
+            os.remove(bak)
+            print(f"[revert] 恢复 {rel}")
     dst = os.path.join(demo, "minicpm_ext")
     if os.path.isdir(dst):
         shutil.rmtree(dst)
