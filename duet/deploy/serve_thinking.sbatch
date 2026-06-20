@@ -27,21 +27,30 @@ ENDPOINTS=/home/justin/duet-endpoints.env
 echo "[serve] node=$NODE job=$JOB"
 nvidia-smi -L
 
-# --- Thinker A: Qwen3.5-35B-A3B on GPU 0,1 (bf16, TP=2) ---
-CUDA_VISIBLE_DEVICES=0,1 "$VLLM" serve Qwen/Qwen3.5-35B-A3B \
-  --served-model-name qwen \
+# --- Thinker A: LFM2.5-8B-A1B on GPU 0,1 (Liquid MoE, 8.3B total / ~1.5B active) ---
+# Swapped from Qwen3.5-35B-A3B (3B active) to LFM2.5-8B-A1B (~1.5B active) for FASTER decode
+# (speed > agentic depth, per the brief). Served as "qwen" on :8001 so the proxy/hermes config
+# LFM2.5 uses Pythonic tool calls -> --tool-call-parser lfm2 (vllm/tool_parsers/lfm2_tool_parser.py,
+# needs vLLM>=0.22; we have 0.23). It has NO separate reasoning parser — the tool parser is enough.
+# No --gdn flag (that was Qwen3.5's linear-attn). Served as "lfm" on :8001.
+CUDA_VISIBLE_DEVICES=0,1 "$VLLM" serve LiquidAI/LFM2.5-8B-A1B \
+  --served-model-name lfm \
   --tensor-parallel-size 2 --host 0.0.0.0 --port 8001 \
-  --max-model-len 131072 \
-  --gdn-prefill-backend triton \
-  --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 \
-  > /home/justin/vllm-qwen.$JOB.log 2>&1 &
-QWEN_PID=$!
+  --max-model-len 128000 \
+  --enable-auto-tool-choice --tool-call-parser lfm2 \
+  > /home/justin/vllm-think.$JOB.log 2>&1 &
+THINK_PID=$!
 
-# --- Thinker B: gemma-4-26B-A4B-it on GPU 2,3 (bf16, TP=2) ---
-CUDA_VISIBLE_DEVICES=2,3 "$VLLM" serve google/gemma-4-26B-A4B-it \
+# --- Thinker B: gemma-4-12B-it on GPU 2,3 (DENSE 12B, audio+vision+text) ---
+# Swapped from the 26B-A4B MoE (which has NO audio tower) to 12B-it, which is encoder-free
+# omni: it ingests image+audio directly (--limit-mm-per-prompt). Paves the way to feed user
+# audio straight to the backend and drop whisper STT. Needs vllm[audio] deps (librosa+soundfile,
+# installed into duet-env). Served as "gemma" on :8002 so the proxy is unchanged.
+CUDA_VISIBLE_DEVICES=2,3 "$VLLM" serve google/gemma-4-12B-it \
   --served-model-name gemma \
   --tensor-parallel-size 2 --host 0.0.0.0 --port 8002 \
   --max-model-len 131072 \
+  --limit-mm-per-prompt '{"image":4,"audio":1}' \
   --enable-auto-tool-choice --tool-call-parser gemma4 --reasoning-parser gemma4 \
   > /home/justin/vllm-gemma.$JOB.log 2>&1 &
 GEMMA_PID=$!
@@ -57,13 +66,13 @@ wait_health () {
   echo "[serve] $name healthy on :$port"
 }
 
-wait_health 8001 qwen
+wait_health 8001 lfm
 wait_health 8002 gemma
 
 cat > "$ENDPOINTS" <<EOF
 # DUET-Lite thinking-layer endpoints (job $JOB on $NODE)
-QWEN_URL=http://$NODE:8001
-QWEN_MODEL=qwen
+THINK_URL=http://$NODE:8001
+THINK_MODEL=lfm
 GEMMA_URL=http://$NODE:8002
 GEMMA_MODEL=gemma
 SERVE_NODE=$NODE
@@ -74,4 +83,4 @@ cat "$ENDPOINTS"
 echo "[serve] both servers up. holding the allocation (scancel $JOB to stop)."
 
 # keep the allocation alive as long as either server runs
-wait $QWEN_PID $GEMMA_PID
+wait $THINK_PID $GEMMA_PID

@@ -69,13 +69,20 @@ _DEFER_SIGNALS = (
 )
 
 GATEWAY = os.environ.get("MINICPM_GATEWAY", "http://liquid-gpu-053:8006").rstrip("/")
-QWEN_URL = os.environ.get("QWEN_URL", "http://liquid-gpu-001:8001").rstrip("/")
+# Thinking-layer (hermes research) model endpoint. THINK_URL is the standard name;
+# QWEN_URL is still accepted as a legacy fallback.
+THINK_URL = os.environ.get("THINK_URL", os.environ.get("QWEN_URL", "http://liquid-gpu-026:8001")).rstrip("/")
 ASR_URL = os.environ.get("ASR_URL", "http://liquid-gpu-060:8020").rstrip("/")
-MODEL = os.environ.get("THINKER_MODEL", "qwen")
-# Aux model (router + spokenify) — offload to gemma so Qwen's GPUs stay free for research.
-AUX_URL = os.environ.get("AUX_URL", QWEN_URL).rstrip("/")
+MODEL = os.environ.get("THINKER_MODEL", "lfm")
+# Aux model (router + spokenify) — runs on gemma so the research model's GPUs stay free.
+AUX_URL = os.environ.get("AUX_URL", THINK_URL).rstrip("/")
 AUX_MODEL = os.environ.get("AUX_MODEL", MODEL)
 PORT = int(os.environ.get("PROXY_PORT", "8010"))
+# Grace before the anti-抢答 mute kicks in, so the model's brief ack ("Sure, let me check")
+# finishes instead of being clipped mid-word. Short enough that a hallucinated FACT — which the
+# model only reaches AFTER the ack — still gets cut. Tune via env if 抢答 leaks (lower) or the
+# ack still clips (raise).
+GATE_DELAY = float(os.environ.get("GATE_DELAY", "1.0"))
 TOOLSETS = [t for t in os.environ.get("HERMES_TOOLSETS", "").split(",") if t]
 MAXMSG = 128 * 1024 * 1024  # match MiniCPM gateway's bumped WS payload limit
 
@@ -97,12 +104,14 @@ class Hub:
     def __init__(self) -> None:
         self.subscribers: set[asyncio.Queue] = set()
         self.active_up = None          # the live upstream WS to MiniCPM (for write-back)
+        self.active_gate = None        # per-connection state dict (drives force_listen)
+        self._gate_token = 0           # invalidates stale force_listen failsafe timers
         self.recent: list[str] = []    # recent STT transcripts (context for the router)
         self.log = EventLog()
         self.log.subscribe(self._on_event)
         self.conductor = Conductor(
-            thinking=HermesThinkingClient(QWEN_URL, model=MODEL, enabled_toolsets=TOOLSETS,
-                                          max_iterations=6),
+            thinking=HermesThinkingClient(THINK_URL, model=MODEL, enabled_toolsets=TOOLSETS,
+                                          max_iterations=3),   # speed > depth: 1 search + answer
             speaker=RecordingSpeaker(), log=self.log, scene="duplex")
 
     def _on_event(self, ev: Event) -> None:
@@ -120,6 +129,7 @@ class Hub:
         self.conductor.reset()
         self.log.clear()
         self.recent.clear()
+        self._set_listen_gate(False)   # drop any stale mute + invalidate failsafe timers
         msg = json.dumps({"kind": "__reset__"})
         for q in list(self.subscribers):
             try:
@@ -127,6 +137,25 @@ class Hub:
             except Exception:
                 pass
         print("[duet] conversation history reset", flush=True)
+
+    def _set_listen_gate(self, on: bool) -> None:
+        """Hard-mute (force_listen) the FROZEN duplex model during the research window so
+        it can't 抢答 (speak its own hallucinated fact); release it when the answer write-back
+        begins. force_listen is a per-frame flag the model re-reads every chunk and, mid-turn,
+        feeds <|turn_eos|> to stop any in-progress speech within ~one chunk. Driven by adding
+        the flag to the browser's input.append frames in rewrite_client.
+        A failsafe auto-clears it after 25s so a failed/timed-out research can't mute forever."""
+        self._gate_token += 1
+        if self.active_gate is not None:
+            self.active_gate["force_listen"] = on
+        if on:
+            tok = self._gate_token
+            async def _failsafe():
+                await asyncio.sleep(25)
+                if self._gate_token == tok and self.active_gate is not None:
+                    self.active_gate["force_listen"] = False
+                    print("[duet] force_listen failsafe-cleared (research timeout)", flush=True)
+            asyncio.create_task(_failsafe())
 
     async def _spokenify(self, text: str) -> str:
         """Rewrite the verbose RESULT into one short, TTS/ASR-robust spoken sentence.
@@ -153,25 +182,33 @@ class Hub:
             return _condense(text)
 
     async def _voice_back(self, text: str) -> None:
-        """TTS a clean spoken answer and inject it as audio so the model speaks it."""
+        """Make the duplex model speak the answer VERBATIM via a force_speak text
+        injection (teacher-forced into the decoder, then TTS-rendered). Replaces the
+        old TTS -> MiniCPM re-ASR -> re-voice path, which garbled names/numbers
+        ("Ramin Hasani" -> "Robin Ha sa"). We still run _spokenify to condense the
+        verbose RESULT into ONE short sentence (and round numbers for natural voice),
+        but it no longer needs to be ASR-robust. control.force_speak is sent DIRECTLY
+        to the gateway WS (active_up), NOT through rewrite_client. We must clear the
+        force_listen gate FIRST, else the next browser input.append frame re-mutes the
+        model mid-utterance and cuts off the forced speech."""
         up = self.active_up
         if up is None or getattr(up, "closed", True):
             return
         spoken = await self._spokenify(text)
-        loop = asyncio.get_running_loop()
-        pcm = await loop.run_in_executor(None, tts_pcm_f32, "Answer: " + spoken)
-        if not pcm:
+        if not spoken:
+            spoken = _condense(text)
+        if not spoken:
             return
-        print(f"[duet] voice-back -> {spoken[:70]!r}", flush=True)
-        frame = 16000 * 4                            # ~1s of 16kHz float32, like a real chunk
-        for i in range(0, len(pcm), frame):
-            try:
-                await up.send_str(json.dumps(
-                    {"type": "input.append",
-                     "input": {"audio": base64.b64encode(pcm[i:i + frame]).decode()}}))
-            except Exception:
-                return
-            await asyncio.sleep(0.05)
+        self._set_listen_gate(False)                 # release the model BEFORE forcing speech
+        try:
+            await up.send_str(json.dumps(
+                {"type": "control.force_speak", "payload": {"text": spoken}},
+                ensure_ascii=False))
+            print(f"[duet] force_speak -> {spoken[:70]!r}", flush=True)
+        except Exception as e:
+            # No fallback to the old TTS->input.append path: that lossy path is exactly
+            # what this removes. Gate already cleared, so the model stays responsive.
+            print(f"[duet] force_speak failed: {e}", flush=True)
 
     # called when the model finishes a turn: its (defer-prompted) text RESTATES the
     # user's question. We dispatch the thinking layer on that clean restatement.
@@ -186,13 +223,16 @@ class Hub:
                    "chat_template_kwargs": {"enable_thinking": False},
                    "messages": [
                        {"role": "system", "content":
-                        "You build a web search query for a live voice assistant. Given the "
-                        "recent user turns and the LATEST turn, resolve the latest into ONE "
-                        "standalone search query: handle corrections/clarifications (e.g. "
-                        "'I mean the stock price', 'just the nvidia one') by combining with "
-                        "context, and fix obvious speech-to-text errors (e.g. 'store'->'stock'). "
-                        "If the latest is only a greeting, thanks, filler, or has no info "
-                        "request even with context, output exactly: NONE."},
+                        "You build ONE web search query for a live voice assistant. Given the "
+                        "recent user turns and the LATEST turn, turn the latest into a single "
+                        "standalone search query. Rules: (1) handle corrections/clarifications "
+                        "(e.g. 'I mean the stock price', 'just the nvidia one') using context; "
+                        "(2) fix obvious speech-to-text errors (e.g. 'store'->'stock'); (3) if "
+                        "the latest asks for MULTIPLE things (e.g. 'weather in SF and the nvidia "
+                        "stock price'), keep them BOTH in one query — do NOT drop it. Output the "
+                        "query for ANY question or information request, however casual. Output "
+                        "exactly NONE ONLY when the latest is purely a greeting, thanks, "
+                        "acknowledgement, or filler with literally no question in it."},
                        {"role": "user", "content": f"Recent turns: {ctx}\nLatest: {transcript}"}]}
         try:
             async with aiohttp.ClientSession() as s:
@@ -226,6 +266,7 @@ class Hub:
         fragments and (2) require the router to confirm a clear info request."""
         transcript = (await self._asr(pcm)).strip()
         if len(transcript.split()) < 3:          # filler / half-word / noise -> ignore
+            self._set_listen_gate(False)          # not a real query -> release the optimistic mute
             if transcript:
                 print(f"[duet] STT (too short, skip) -> {transcript!r}", flush=True)
             return
@@ -234,9 +275,11 @@ class Hub:
         del self.recent[:-6]
         query = await self._route(transcript, self.recent)   # context-aware query / None
         if not query:
+            self._set_listen_gate(False)          # chit-chat -> release the optimistic mute
             print(f"[duet] route: drop -> {transcript[:50]!r}", flush=True)
             return
         print(f"[duet] DISPATCH -> {query!r}", flush=True)
+        self._set_listen_gate(True)               # mute the model during research (anti-抢答)
         if self.conductor.phase == Phase.THINKING:
             await self.conductor.on_interrupt()   # new turn supersedes -> [WAIT]
         await self.conductor.on_user_utterance(query)
@@ -274,7 +317,7 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
         up_url += "?" + request.query_string
 
     user_pcm = bytearray()       # USER mic audio this turn (16kHz mono f32), echo-free
-    state = {"speaking": False}
+    state = {"speaking": False, "force_listen": False}
     _seen: set = set()
 
     def rewrite_client(data):
@@ -294,13 +337,17 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
             payload[field] = (payload.get(field) or "") + DEFER_PROMPT
             print("[duet] injected DEFER prompt into session.init", flush=True)
             return json.dumps(msg, ensure_ascii=False)
-        if t == "input.append" and not state["speaking"]:
-            a = (msg.get("input") or {}).get("audio")
-            if a:
-                try:
-                    user_pcm.extend(base64.b64decode(a))
-                except Exception:
-                    pass
+        if t == "input.append":
+            if not state["speaking"]:
+                a = (msg.get("input") or {}).get("audio")
+                if a:
+                    try:
+                        user_pcm.extend(base64.b64decode(a))
+                    except Exception:
+                        pass
+            if state["force_listen"]:        # anti-抢答: force the model to keep listening
+                msg.setdefault("input", {})["force_listen"] = True
+                return json.dumps(msg, ensure_ascii=False)
         return data
 
     def tap_gateway(data):
@@ -323,7 +370,16 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
             if not state["speaking"]:
                 state["speaking"] = True
                 pcm = bytes(user_pcm); user_pcm.clear()
-                if len(pcm) > int(16000 * 4 * 0.3):   # >~0.3s of f32 audio
+                if len(pcm) > int(16000 * 4 * 0.3):   # >~0.3s of f32 audio = a real user turn
+                    # Arm the anti-抢答 mute after GATE_DELAY so the model's brief ack
+                    # ("Sure, let me check") finishes instead of clipping mid-word, while still
+                    # cutting a hallucinated FACT (which comes only AFTER the ack). STT+route
+                    # (~2-3s) finishes after the arm, then on_user_audio keeps the mute for a
+                    # research turn or releases it for chit-chat.
+                    async def _arm_gate(st=state):
+                        await asyncio.sleep(GATE_DELAY)
+                        st["force_listen"] = True
+                    asyncio.create_task(_arm_gate())
                     asyncio.create_task(hub.on_user_audio(pcm))
         elif t == "response.output.delta" and kind == "listen":
             state["speaking"] = False
@@ -331,6 +387,7 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
     try:
         async with session.ws_connect(up_url, max_msg_size=MAXMSG, heartbeat=30) as up:
             hub.active_up = up           # enable write-back into this duplex session
+            hub.active_gate = state      # let the hub drive force_listen on this connection
             async def c2u():
                 async for m in client:
                     if m.type == aiohttp.WSMsgType.TEXT:
@@ -354,6 +411,7 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
             await client.close()
     finally:
         hub.active_up = None
+        hub.active_gate = None
     return client
 
 
@@ -410,7 +468,7 @@ _OVERLAY_JS = r"""
     'background:#0C1116;color:#C9D4DA;font:12px ui-monospace,Menlo,monospace;'+
     'border-left:1px solid #243; box-shadow:-4px 0 24px rgba(0,0,0,.4);display:flex;flex-direction:column;';
   p.innerHTML = '<div style="padding:12px 14px;border-bottom:1px solid #233;letter-spacing:.12em;'+
-    'text-transform:uppercase;color:#7E8C96;font-size:11px">Thinking Layer · Qwen3.5-35B-A3B / hermes'+
+    'text-transform:uppercase;color:#7E8C96;font-size:11px">Thinking Layer · LFM2.5-8B-A1B / hermes'+
     '<span id="duet-dot" style="float:right;color:#FF6A5A">●</span></div>'+
     '<div id="duet-log" style="flex:1;overflow:auto;padding:8px 12px"></div>';
   document.body.appendChild(p);
