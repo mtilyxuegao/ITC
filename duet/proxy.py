@@ -107,6 +107,7 @@ class Hub:
         self.active_gate = None        # per-connection state dict (drives force_listen)
         self._gate_token = 0           # invalidates stale force_listen failsafe timers
         self._t_dispatch = 0.0         # loop time at dispatch, for answer-latency timing
+        self.session = None            # shared aiohttp session (set at startup; pooled keep-alive)
         self.recent: list[str] = []    # recent STT transcripts (context for the router)
         self.log = EventLog()
         self.log.subscribe(self._on_event)
@@ -195,9 +196,9 @@ class Hub:
         up = self.active_up
         if up is None or getattr(up, "closed", True):
             return
-        spoken = await self._spokenify(text)
-        if not spoken:
-            spoken = _condense(text)
+        # hermes already emits ONE short spoken sentence with worded numbers (see its prompt),
+        # so just strip markdown/trim locally — NO extra gemma spokenify hop on the critical path.
+        spoken = _condense(text)
         if not spoken:
             return
         self._set_listen_gate(False)                 # release the model BEFORE forcing speech
@@ -237,10 +238,9 @@ class Hub:
                         "acknowledgement, or filler with literally no question in it."},
                        {"role": "user", "content": f"Recent turns: {ctx}\nLatest: {transcript}"}]}
         try:
-            async with aiohttp.ClientSession() as s:
-                async with s.post(AUX_URL + "/v1/chat/completions", json=payload,
-                                  timeout=aiohttp.ClientTimeout(total=20)) as r:
-                    d = await r.json()
+            async with self.session.post(AUX_URL + "/v1/chat/completions", json=payload,
+                                          timeout=aiohttp.ClientTimeout(total=20)) as r:
+                d = await r.json()
             out = (d["choices"][0]["message"]["content"] or "").strip()
         except Exception as e:
             print(f"[duet] router error: {e}", flush=True)
@@ -252,11 +252,10 @@ class Hub:
     async def _asr(self, pcm: bytes) -> str:
         """Transcribe the user's audio via the GPU whisper-large-v3 service."""
         try:
-            async with aiohttp.ClientSession() as s:
-                async with s.post(ASR_URL + "/asr",
-                                  json={"audio_b64": base64.b64encode(pcm).decode()},
-                                  timeout=aiohttp.ClientTimeout(total=30)) as r:
-                    d = await r.json()
+            async with self.session.post(ASR_URL + "/asr",
+                                          json={"audio_b64": base64.b64encode(pcm).decode()},
+                                          timeout=aiohttp.ClientTimeout(total=30)) as r:
+                d = await r.json()
             return (d.get("text") or "").strip()
         except Exception as e:
             print(f"[duet] ASR error: {e}", flush=True)
@@ -494,6 +493,7 @@ def make_app() -> web.Application:
 
     async def _on_start(app):
         app["session"] = aiohttp.ClientSession()
+        app["hub"].session = app["session"]   # pooled keep-alive for ASR/router calls
 
     async def _on_clean(app):
         await app["session"].close()

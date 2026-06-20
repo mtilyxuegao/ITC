@@ -86,11 +86,13 @@ class HermesThinkingClient:
             model=self.model, max_iterations=self.max_iterations,
             enabled_toolsets=self.enabled_toolsets,
             ephemeral_system_prompt=(
-                "You are a FAST research assistant for a LIVE voice call — SPEED is the "
-                "ONLY priority; completeness does not matter. Do EXACTLY ONE web_search, "
-                "then immediately answer in 1-2 short sentences from the result SNIPPETS. "
-                "NEVER call web_extract or open pages — snippets are enough. Do not search "
-                "twice. Answer right away with whatever the first search returned."),
+                "You are a FAST research assistant for a LIVE VOICE call — SPEED is the ONLY "
+                "priority; completeness does not matter. Do EXACTLY ONE web_search, then "
+                "immediately answer from the result SNIPPETS. NEVER call web_extract or open "
+                "pages; never search twice. Your final answer is READ ALOUD verbatim, so make "
+                "it ONE short natural spoken sentence (under 18 words): spell numbers as plain "
+                "rounded words ('about two hundred ten dollars'), no symbols, no $, no decimals, "
+                "no ranges, no URLs, no markdown."),
             skip_context_files=True, skip_memory=True, session_db=None,
             quiet_mode=True, save_trajectories=False,
             step_callback=step_cb,
