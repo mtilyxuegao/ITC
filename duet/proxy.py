@@ -73,7 +73,7 @@ GATEWAY = os.environ.get("MINICPM_GATEWAY", "http://liquid-gpu-053:8006").rstrip
 # QWEN_URL is still accepted as a legacy fallback.
 THINK_URL = os.environ.get("THINK_URL", os.environ.get("QWEN_URL", "http://liquid-gpu-026:8001")).rstrip("/")
 ASR_URL = os.environ.get("ASR_URL", "http://liquid-gpu-060:8020").rstrip("/")
-MODEL = os.environ.get("THINKER_MODEL", "lfm")
+MODEL = os.environ.get("THINKER_MODEL", "qwen")
 # Aux model (router + spokenify) — runs on gemma so the research model's GPUs stay free.
 AUX_URL = os.environ.get("AUX_URL", THINK_URL).rstrip("/")
 AUX_MODEL = os.environ.get("AUX_MODEL", MODEL)
@@ -106,6 +106,7 @@ class Hub:
         self.active_up = None          # the live upstream WS to MiniCPM (for write-back)
         self.active_gate = None        # per-connection state dict (drives force_listen)
         self._gate_token = 0           # invalidates stale force_listen failsafe timers
+        self._t_dispatch = 0.0         # loop time at dispatch, for answer-latency timing
         self.recent: list[str] = []    # recent STT transcripts (context for the router)
         self.log = EventLog()
         self.log.subscribe(self._on_event)
@@ -204,7 +205,8 @@ class Hub:
             await up.send_str(json.dumps(
                 {"type": "control.force_speak", "payload": {"text": spoken}},
                 ensure_ascii=False))
-            print(f"[duet] force_speak -> {spoken[:70]!r}", flush=True)
+            _ms = (asyncio.get_running_loop().time() - self._t_dispatch) * 1000 if self._t_dispatch else 0
+            print(f"[duet] force_speak (research+spokenify {_ms:.0f}ms) -> {spoken[:70]!r}", flush=True)
         except Exception as e:
             # No fallback to the old TTS->input.append path: that lossy path is exactly
             # what this removes. Gate already cleared, so the model stays responsive.
@@ -264,21 +266,26 @@ class Hub:
         """User's turn ended: STT -> noise filter -> semantic gate -> dispatch.
         STT is noisy (hallucinated text on silence/echo), so we (1) drop short
         fragments and (2) require the router to confirm a clear info request."""
+        loop = asyncio.get_running_loop(); _t0 = loop.time()
         transcript = (await self._asr(pcm)).strip()
+        _ms_asr = (loop.time() - _t0) * 1000
         if len(transcript.split()) < 3:          # filler / half-word / noise -> ignore
             self._set_listen_gate(False)          # not a real query -> release the optimistic mute
             if transcript:
-                print(f"[duet] STT (too short, skip) -> {transcript!r}", flush=True)
+                print(f"[duet] STT (asr {_ms_asr:.0f}ms, too short, skip) -> {transcript!r}", flush=True)
             return
-        print(f"[duet] STT -> {transcript!r}", flush=True)
+        print(f"[duet] STT (asr {_ms_asr:.0f}ms) -> {transcript!r}", flush=True)
         self.recent.append(transcript)
         del self.recent[:-6]
+        _t1 = loop.time()
         query = await self._route(transcript, self.recent)   # context-aware query / None
+        _ms_route = (loop.time() - _t1) * 1000
         if not query:
             self._set_listen_gate(False)          # chit-chat -> release the optimistic mute
-            print(f"[duet] route: drop -> {transcript[:50]!r}", flush=True)
+            print(f"[duet] route: drop (route {_ms_route:.0f}ms) -> {transcript[:50]!r}", flush=True)
             return
-        print(f"[duet] DISPATCH -> {query!r}", flush=True)
+        self._t_dispatch = loop.time()            # for end-to-end answer-latency timing in _voice_back
+        print(f"[duet] DISPATCH (route {_ms_route:.0f}ms) -> {query!r}", flush=True)
         self._set_listen_gate(True)               # mute the model during research (anti-抢答)
         if self.conductor.phase == Phase.THINKING:
             await self.conductor.on_interrupt()   # new turn supersedes -> [WAIT]
@@ -369,6 +376,7 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
         if is_speak:
             if not state["speaking"]:
                 state["speaking"] = True
+                state["spoke_text"] = ""              # per-turn buffer of the model's spoken words
                 pcm = bytes(user_pcm); user_pcm.clear()
                 if len(pcm) > int(16000 * 4 * 0.3):   # >~0.3s of f32 audio = a real user turn
                     # Arm the anti-抢答 mute after GATE_DELAY so the model's brief ack
@@ -381,6 +389,16 @@ async def proxy_ws(request: web.Request) -> web.WebSocketResponse:
                         st["force_listen"] = True
                     asyncio.create_task(_arm_gate())
                     asyncio.create_task(hub.on_user_audio(pcm))
+            # CONTENT-BASED anti-抢答 gate (additive to the GATE_DELAY timer): the kind=text
+            # delta carries the spoken words BEFORE that chunk's audio. The instant a FACT token
+            # (digit / $ % °) appears past the short ack, mute — cutting a hallucinated number/price
+            # before it is heard. The ack ("Sure, let me check") has no digits so it is unaffected.
+            if kind == "text" and not state["force_listen"]:
+                state["spoke_text"] = (state.get("spoke_text") or "") + (msg.get("text") or "")
+                buf = state["spoke_text"]
+                if len(buf) > 8 and any(c in buf for c in "0123456789$%°"):
+                    state["force_listen"] = True
+                    print(f"[duet] content-gate: muted on fact-token in {buf[:48]!r}", flush=True)
         elif t == "response.output.delta" and kind == "listen":
             state["speaking"] = False
 
@@ -468,7 +486,7 @@ _OVERLAY_JS = r"""
     'background:#0C1116;color:#C9D4DA;font:12px ui-monospace,Menlo,monospace;'+
     'border-left:1px solid #243; box-shadow:-4px 0 24px rgba(0,0,0,.4);display:flex;flex-direction:column;';
   p.innerHTML = '<div style="padding:12px 14px;border-bottom:1px solid #233;letter-spacing:.12em;'+
-    'text-transform:uppercase;color:#7E8C96;font-size:11px">Thinking Layer · LFM2.5-8B-A1B / hermes'+
+    'text-transform:uppercase;color:#7E8C96;font-size:11px">Thinking Layer · Qwen3.5-35B-A3B / hermes'+
     '<span id="duet-dot" style="float:right;color:#FF6A5A">●</span></div>'+
     '<div id="duet-log" style="flex:1;overflow:auto;padding:8px 12px"></div>';
   document.body.appendChild(p);

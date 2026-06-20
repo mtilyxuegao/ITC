@@ -43,7 +43,7 @@ async def asr(request: web.Request) -> web.Response:
     if float(np.sqrt(np.mean(np.square(audio)))) < RMS_GATE:
         return web.json_response({"text": ""})
     segments, _ = get_model().transcribe(
-        audio, beam_size=5,
+        audio, beam_size=1,   # greedy: ~2-3x faster on large-v3 for short voice turns, negligible WER
         language=body.get("language") or ASR_LANGUAGE,
         vad_filter=True, vad_parameters={"min_silence_duration_ms": 500},
         no_speech_threshold=0.6, condition_on_previous_text=False, temperature=0.0)

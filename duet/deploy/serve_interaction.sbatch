@@ -89,7 +89,7 @@ HERMES_PY=/home/justin/hermes-env/bin/python
 [ -f /home/justin/duet-endpoints.env ]     && source /home/justin/duet-endpoints.env      # THINK_URL, GEMMA_URL
 [ -f /home/justin/duet-asr-endpoint.env ]  && source /home/justin/duet-asr-endpoint.env    # ASR_URL
 PX_THINK=${THINK_URL:-http://liquid-gpu-026:8001}
-PX_THINK_MODEL=${THINK_MODEL:-lfm}
+PX_THINK_MODEL=${THINK_MODEL:-qwen}
 PX_AUX=${GEMMA_URL:-http://liquid-gpu-026:8002}
 PX_ASR=${ASR_URL:-http://liquid-gpu-037:8020}
 MINICPM_GATEWAY=http://127.0.0.1:8006 THINK_URL=$PX_THINK THINKER_MODEL=$PX_THINK_MODEL \
