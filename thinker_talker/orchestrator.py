@@ -38,6 +38,7 @@ class Orchestrator:
         self._last_thought_ctx = None  # 去重:上下文没变就不重复打扰大模型
         self._audio_buf = bytearray()  # 用户上行音频(float32 16k),供 ASR
         self._last_user_text = ""
+        self._ai_audio_guard_until = 0.0  # AI 说话 + 尾窗:此刻之前丢弃上行音频(防自听)
         self._asr_enabled = (cfg.asr_provider == "local") or bool(cfg.asr_api_key) or bool(cfg.openai_api_key)
 
     def _tlog(self, tag: str, text: str) -> None:
@@ -52,6 +53,19 @@ class Orchestrator:
                     f.write(line + "\n")
             except Exception:
                 pass
+
+    # ---------- 自听门控(防 AI 输出被自己 ASR 回采成"用户输入") ----------
+    def _mark_ai_speaking(self) -> None:
+        """AI(Talker 草稿 / INJECT / CUT)正在出声:刷新尾窗并清掉已缓冲的上行,
+        这样 AI 这段时间的音频既不会被累积,也不会在停说后被转写。"""
+        self._ai_audio_guard_until = time.time() + self.cfg.asr_echo_guard_seconds
+        self._audio_buf.clear()
+
+    def _ai_holding(self) -> bool:
+        """AI 是否正持麦或处于停说尾窗内(此时上行多半是自己的回声)。"""
+        return (self.state.floor is not Floor.IDLE
+                or self.state.talker_state is not TalkerState.LISTENING
+                or time.time() < self._ai_audio_guard_until)
 
     # ---------- 打断:人 → AI ----------
     async def on_user_barge(self) -> None:
@@ -71,6 +85,7 @@ class Orchestrator:
                 self.state.add_turn("talker", ev.text)
                 self._tlog("小模型", ev.text)
                 self.state.talker_state = TalkerState.SPEAKING
+                self._mark_ai_speaking()  # 关掉 ASR 上行,防自己的话被回采成"用户输入"
                 if self.state.floor is Floor.IDLE:
                     self.arbiter.take(Floor.TALKER)
             elif ev.kind == "listen":
@@ -80,6 +95,8 @@ class Orchestrator:
                     self.arbiter.release()
                 self.state.talker_state = TalkerState.LISTENING
             elif ev.kind == "user_audio" and ev.audio_b64:
+                if self._ai_holding():
+                    continue  # AI 正在说话/尾窗内:丢弃上行,避免把自己的话喂给 ASR
                 try:
                     self._audio_buf += base64.b64decode(ev.audio_b64)
                 except Exception:
@@ -165,6 +182,7 @@ class Orchestrator:
                 logger.info("inject deferred (floor=%s)", self.state.floor.value)
                 return
             self.arbiter.take(Floor.THINKER)
+            self._mark_ai_speaking()  # INJECT 也是 AI 出声,门控 ASR 防回采
             await self.talker.force_speak(d.text)
             self._tlog("→小模型说出(INJECT)", d.text)
             await self._send_status(stage="fired", action="INJECT", text=d.text)
@@ -176,9 +194,10 @@ class Orchestrator:
             if not self._cut_allowed(d):
                 return
             self.arbiter.take(Floor.THINKER)
-            # 路线2(force_speak)直接让模型说 redirect;不加 [CUT] 前缀(那是已弃用的
-            # system-prompt 软触发方案,否则模型会把"[CUT]"当文本念出来)。
-            await self.talker.force_speak(d.text)
+            self._mark_ai_speaking()  # CUT 也是 AI 出声,门控 ASR 防回采
+            # 路线2(force_speak)直接让模型说 redirect;interrupt=True 让 worker 先 stop+flush
+            # 当前(可能在重复的)输出,再说 redirect。不加 [CUT] 前缀(已弃用的软触发方案)。
+            await self.talker.force_speak(d.text, interrupt=True)
             self._tlog("→小模型打断说出(CUT)", d.text)
             await self._send_status(stage="fired", action="CUT", text=d.text)
             self.state.add_turn("talker", d.text)
@@ -217,6 +236,8 @@ class Orchestrator:
         async with aiohttp.ClientSession() as s:
             while not self._stop.is_set():
                 await asyncio.sleep(2.5)
+                if self._ai_holding():  # AI 正在说话/尾窗内:此刻的缓冲多半是回声,跳过
+                    continue
                 buf = bytes(self._audio_buf)
                 if len(buf) < 16000 * 4:  # < 1s
                     continue
@@ -226,12 +247,17 @@ class Orchestrator:
                                         base_url=self.cfg.asr_base_url,
                                         model=self.cfg.asr_model,
                                         language=self.cfg.asr_language)
-                if text and text != self._last_user_text and len(text) >= 2:
-                    self._last_user_text = text
-                    self.state.add_turn("user", text)
-                    self._tlog("用户(ASR)", text)
-                    await self._send_status(stage="asr", text=text)
-                    await self._send_status(stage="asr", text=text)
+                if not (text and text != self._last_user_text and len(text) >= 2):
+                    continue
+                # 文本级自回声过滤:转写其实是 AI 自己刚说的话 -> 丢弃,不当用户输入
+                if self.state.looks_like_self_echo(text, self.cfg.asr_echo_sim_threshold):
+                    self._tlog("用户(ASR·丢弃回声)", text)
+                    self._audio_buf.clear()
+                    continue
+                self._last_user_text = text
+                self.state.add_turn("user", text)
+                self._tlog("用户(ASR)", text)
+                await self._send_status(stage="asr", text=text)
 
     async def run(self) -> None:
         await self.talker.connect()

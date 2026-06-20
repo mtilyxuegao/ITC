@@ -43,6 +43,9 @@ DISPATCH_REPLACEMENT = (
     "            if msg_type == \"control.force_speak\":  # " + MARKER + "\n"
     "                await _tt_handle_force_speak(session, message)\n"
     "                continue\n"
+    "            if msg_type == \"control.stop\":  # " + MARKER + "\n"
+    "                await _tt_handle_stop(session, message)\n"
+    "                continue\n"
     "            # close 只走 HTTP unary 控制通道（见协议 network §3.2），WS 上不接受 close\n"
     "            raise RuntimeError(f\"unsupported message type: {msg_type}\")"
 )
@@ -62,15 +65,35 @@ def _tt_install_force_speak() -> None:
     _TT_FORCE_SPEAK_INSTALLED = True
 
 
+async def _tt_handle_stop(session, message) -> None:
+    """处理 control.stop:只停不说——截断当前 speak turn + flush 模型侧 TTS,让 Talker 立刻安静。
+    注:重复输出由客户端持续上行驱动(server 端无输入队列),根治靠编排层 ASR 自门控 + epoch 围栏;
+    这里负责掐断"已经在说的那一句"。"""
+    _tt_install_force_speak()
+    async with session._op_lock:
+        await session._wait_finalize()
+        await asyncio.to_thread(session.backend.duplex_stop)
+        # 回一个 listen,让客户端切回聆听态(flush 残余播放缓冲需改前端 vendored lib,暂不做)
+        await session.send_output_delta("listen", session_id=session.session_id,
+                                        response_id=session._active_response_id)
+        session._active_response_id = None
+
+
 async def _tt_handle_force_speak(session, message) -> None:
-    """处理 control.force_speak:让 Talker 立即说出指定文本,并把音频推回前端。"""
+    """处理 control.force_speak:让 Talker 立即说出指定文本,并把音频推回前端。
+    payload.interrupt=True(CUT):先 duplex_stop 截断当前(可能在重复的)那句 + flush TTS,再说 redirect;
+    False(INJECT):直接接话(编排层只在 IDLE 间隙才发 INJECT,故此时通常没有在说的 turn)。"""
     _tt_install_force_speak()
     payload = _payload(message)
     text = str(payload.get("text") or "").strip()
+    interrupt = bool(payload.get("interrupt"))
     if not text:
         return
     async with session._op_lock:
         await session._wait_finalize()
+        if interrupt:
+            # 截断 + flush:停掉当前 turn 的剩余 TTS,模型立刻不再吐残音;redirect 随后整句渲染
+            await asyncio.to_thread(session.backend.duplex_stop)
         result = await asyncio.to_thread(session.backend.duplex_force_speak, text)
         if session._active_response_id is None:
             session._active_response_id = f"resp_{{uuid.uuid4().hex[:12]}}"
@@ -95,7 +118,7 @@ WORKER_ANCHOR = (
     "                    continue"
 )
 WORKER_REP = WORKER_ANCHOR + (
-    "\n\n                if msg_type == \"control.force_speak\":  # " + MARKER + "\n"
+    "\n\n                if msg_type in (\"control.force_speak\", \"control.stop\"):  # " + MARKER + "\n"
     "                    await runtime.backend.send_raw(msg)\n"
     "                    continue"
 )

@@ -62,13 +62,22 @@ class TalkerClient:
             msg["payload"]["input_id"] = input_id
         await self._send(msg)
 
-    async def force_speak(self, text: str, input_id: Optional[str] = None) -> None:
-        """让 Talker 立刻打断并说出 text(走注入的 control.force_speak)。"""
-        msg = {"type": "control.force_speak", "payload": {"text": text}}
+    async def force_speak(self, text: str, input_id: Optional[str] = None, interrupt: bool = False) -> None:
+        """让 Talker 说出 text(走注入的 control.force_speak)。
+        interrupt=True(CUT):先停掉/flush 当前在说的话再说 text;False(INJECT):排队接在后面。"""
+        payload = {"text": text, "interrupt": interrupt}
         if input_id:
-            msg["payload"]["input_id"] = input_id
-        await self._send(msg)
-        logger.info("force_speak -> %r", text[:60])
+            payload["input_id"] = input_id
+        await self._send({"type": "control.force_speak", "payload": payload})
+        logger.info("force_speak(interrupt=%s) -> %r", interrupt, text[:60])
+
+    async def stop(self, input_id: Optional[str] = None) -> None:
+        """立即停掉 Talker 当前发声并 flush 残音(走注入的 control.stop),不接新话。"""
+        payload = {}
+        if input_id:
+            payload["input_id"] = input_id
+        await self._send({"type": "control.stop", "payload": payload})
+        logger.info("stop")
 
     async def _send(self, msg: dict) -> None:
         if self._ws is None:
@@ -158,12 +167,23 @@ class GatewayObserver:
             await self._ws.close()
             self._ws = None
 
-    async def force_speak(self, text: str, input_id: Optional[str] = None) -> None:
+    async def force_speak(self, text: str, input_id: Optional[str] = None, interrupt: bool = False) -> None:
         if self._ws is None:
             raise RuntimeError("observer not connected")
+        payload = {"text": text, "interrupt": interrupt}
+        if input_id:
+            payload["input_id"] = input_id
         async with self._send_lock:
-            await self._ws.send(json.dumps({"type": "control.force_speak", "payload": {"text": text}}))
-        logger.info("force_speak -> %r", text[:60])
+            await self._ws.send(json.dumps({"type": "control.force_speak", "payload": payload}))
+        logger.info("force_speak(interrupt=%s) -> %r", interrupt, text[:60])
+
+    async def stop(self, input_id: Optional[str] = None) -> None:
+        if self._ws is None:
+            raise RuntimeError("observer not connected")
+        payload = {"input_id": input_id} if input_id else {}
+        async with self._send_lock:
+            await self._ws.send(json.dumps({"type": "control.stop", "payload": payload}))
+        logger.info("stop")
 
     async def send_status(self, payload: dict) -> None:
         """把编排层状态/决策推给前端面板(经 hub 广播)。失败不致命。"""

@@ -35,6 +35,25 @@ def test_context_roundtrip():
     assert len(s.recent_context()) == 2
 
 
+def test_self_echo_detection():
+    s = SessionState()
+    s.add_turn("talker", "北京今天多云转晴,气温二十五度")
+    # 完整回采 -> 判为自回声
+    assert s.looks_like_self_echo("北京今天多云转晴,气温二十五度")
+    # 部分回采(子串) -> 也判为自回声
+    assert s.looks_like_self_echo("今天多云转晴")
+    # 真实用户提问,与草稿无关 -> 不是回声
+    assert not s.looks_like_self_echo("帮我订一张去上海的票")
+    # 空文本 -> 不是回声
+    assert not s.looks_like_self_echo("")
+
+
+def test_self_echo_ignores_user_turns():
+    s = SessionState()
+    s.add_turn("user", "讲个笑话")            # 用户轮次不应被当作回声源
+    assert not s.looks_like_self_echo("讲个笑话")
+
+
 def test_floor_inject_only_when_idle():
     s = SessionState()
     a = FloorArbiter(s)

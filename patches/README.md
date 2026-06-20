@@ -25,9 +25,24 @@
 
 1. 复制 `thinker_talker/model_ext/` → `<demo>/minicpm_ext/`(进 build context,容器内可 import)。
 2. 改 `<demo>/py_backend/server.py`:
-   - WS 分发循环加 `control.force_speak` 分支;
-   - 文件末尾追加 `_tt_handle_force_speak()` + 懒加载 `install()`。
+   - WS 分发循环加 `control.force_speak` 与 `control.stop` 分支;
+   - 文件末尾追加 `_tt_handle_force_speak()` / `_tt_handle_stop()` + 懒加载 `install()`。
    `install()` 用 monkeypatch 把方法挂到模型类 / `DuplexView` / `PyTorchBackend`,**不改这三个文件**。
+
+### stop/flush(让 CUT 真能掐断重复输出)
+
+- `control.force_speak` 的 payload 新增 `interrupt`:
+  - `true`(CUT)→ 先 `duplex_stop`(收尾当前 turn + flush 半句 TTS)+ 清空上行队列,再说 redirect;
+  - `false`(INJECT)→ 仍 `_wait_finalize()` 等当前说完再接话(礼貌,不抢话)。
+- `control.stop`:只停不说,用于纯掐断(截断 turn + flush TTS + 回 `listen`)。
+- ✅ **已对真机源码核对**(MiniCPM-o-Demo `py_backend/server.py`,PR #45 `f133fc2`):
+  - server 端**无上行输入队列**——每个 `input.append` 同步跑一次很短的 `duplex_generate`,
+    "重复输出"是**客户端持续上行驱动**的。所以早期设想的"清服务端队列"无的放矢,已去掉;
+    "不再被重新触发"由编排层 ASR 自门控 + epoch 围栏负责(见 `thinker_talker/orchestrator.py`)。
+  - dispatch / `_op_lock` / `_wait_finalize` / `send_output_delta` 锚点在该版本仍命中。
+- ⚠️ **残余播放**:已下发给浏览器、排在 `StreamingPcmPlayer` 队列里的音频会播完(约播放延迟时长)。
+  真正的前端 flush 需改 vendored 的 `/static/duplex/lib/realtime-session.js`(**minified**,无源码补丁点),
+  暂不做;模型侧已立即停产新音频,体感是"尾音很短一截后切到 redirect"。
 
 ## 用法
 

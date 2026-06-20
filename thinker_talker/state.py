@@ -72,6 +72,28 @@ class SessionState:
             return
         self.transcript.append(Turn(speaker, text, self._epoch, time.time()))
 
+    def looks_like_self_echo(self, text: str, threshold: float = 0.8, lookback: int = 6) -> bool:
+        """ASR 转写文本是否其实是 AI 自己刚说的话(经麦克风回采)。
+
+        与最近 lookback 条 talker 草稿做归一化比对:互为子串,或相似度 >= threshold,
+        即判为自回声,应丢弃而不是当成用户输入(否则形成 ASR→Thinker→说话→再采的闭环)。
+        """
+        import difflib
+        nt = "".join((text or "").split())
+        if not nt:
+            return False
+        for turn in list(self.transcript)[-lookback:]:
+            if turn.speaker != "talker":
+                continue
+            ns = "".join(turn.text.split())
+            if not ns:
+                continue
+            if nt in ns or ns in nt:
+                return True
+            if difflib.SequenceMatcher(None, nt, ns).ratio() >= threshold:
+                return True
+        return False
+
     def recent_context(self, max_turns: int = 12) -> List[Turn]:
         items = list(self.transcript)
         return items[-max_turns:]

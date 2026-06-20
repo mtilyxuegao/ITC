@@ -54,6 +54,9 @@ class Config:
     asr_model: str = "gpt-4o-mini-transcribe"
     asr_language: str = "zh"
     asr_api_key: str = ""  # local 不需要
+    # 防自听闭环:AI 持麦/刚说完的尾窗内丢弃上行音频(秒);ASR 文本与近期草稿的相似度阈值
+    asr_echo_guard_seconds: float = 0.6
+    asr_echo_sim_threshold: float = 0.8
 
     # 对话 log:记录小模型草稿 + 大模型决策/搜索/插话(用于核对大模型是否真被调用)
     transcript_log_path: str = ""
@@ -79,6 +82,8 @@ class Config:
             cut_min_confidence=_f("CUT_MIN_CONFIDENCE", cls.cut_min_confidence),
             interrupt_priority=os.environ.get("INTERRUPT_PRIORITY", cls.interrupt_priority),
             inject_wait_for_gap=_b("INJECT_WAIT_FOR_GAP", cls.inject_wait_for_gap),
+            asr_echo_guard_seconds=_f("ASR_ECHO_GUARD_SECONDS", cls.asr_echo_guard_seconds),
+            asr_echo_sim_threshold=_f("ASR_ECHO_SIM_THRESHOLD", cls.asr_echo_sim_threshold),
             transcript_log_path=os.environ.get("TRANSCRIPT_LOG_PATH", cls.transcript_log_path),
             log_level=os.environ.get("LOG_LEVEL", cls.log_level),
         )

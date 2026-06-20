@@ -13,17 +13,29 @@ MiniCPMO45/modeling_minicpmo_unified.py 4959–5310):
   5. 用现成 _convert_results_to_tts_input(hidden) → tts.generate_chunk →
      _generate_waveform_from_tokens 一次性渲染整句音频。
 
-通过 install() 以 monkeypatch 挂到:
-  - 模型类(定义了 streaming_generate 的那个)→ duplex_force_speak(self, text)
-  - core.processors.unified.DuplexView      → force_speak(self, text) -> DuplexGenerateResult
-  - core.processors.pytorch_backend.PyTorchBackend → duplex_force_speak(self, text)
+CUT 的"先停后说":duplex_stop(self) 停掉当前 speak turn 并 flush TTS(丢弃半句残音),
+让 Talker 立刻安静;duplex_force_speak 的步骤 0 在打断时也走同一套 flush,避免新句子与
+被截断那句叠音。编排层 CUT 走 force_speak(text, interrupt=True),网关补丁据此先 stop+flush
+再说 redirect(见 patches/integrate_force_speak.py)。
 
-⚠️ 需在真机(GPU)上做一次联调验证的两点(无法离线单测):
+通过 install() 以 monkeypatch 挂到(force_speak 与 stop 成对):
+  - 模型类(定义了 streaming_generate 的那个)→ duplex_force_speak / duplex_stop
+  - core.processors.unified.DuplexView      → force_speak / stop -> DuplexGenerateResult
+  - core.processors.pytorch_backend.PyTorchBackend → duplex_force_speak / duplex_stop
+
+⚠️ 需在真机(GPU)上做一次联调验证的几点(无法离线单测):
   (a) 整句在单次 generate_chunk(max_new_token 较大)内是否能产出完整音频;
       若 TTS 有每次调用 token 上限,改为对 hidden 分块循环 generate_chunk 即可(结构已留好)。
-  (b) force_speak 之后恢复 duplex 的状态连贯性(滑窗/unit 记账)。本实现手动 feed 了
+  (b) force_speak/stop 之后恢复 duplex 的状态连贯性(滑窗/unit 记账)。本实现手动 feed 了
       turn_eos 但未走 finalize_unit 的 </unit>/register_unit_end;若发现后续聆听异常,
-      在步骤 4 后补一次轻量 unit 收尾即可。
+      在收尾后补一次轻量 unit 收尾即可。
+  (c) 已在真机源码核对(MiniCPM-o-Demo, py_backend/server.py):server 端**无上行输入队列**,
+      每个 input.append 同步跑一次很短的 duplex_generate,"重复输出"由客户端持续上行驱动。
+      因此 stop/flush 负责掐断"当前已经在说的那一句"(截断 turn + 重置 TTS 渲染),
+      而"不再被重新触发"靠编排层 ASR 自门控 + epoch 围栏(见 orchestrator.py)。
+  (d) 残余播放:已下发给浏览器、排在 StreamingPcmPlayer 队列里的音频仍会播完(约播放延迟时长)。
+      真正的前端 flush 需改 vendored 的 /static/duplex/lib/realtime-session.js(minified),暂不做;
+      模型侧已立即停止产生新音频,体感是"尾音很短一截后切到 redirect"。
 """
 from __future__ import annotations
 
@@ -31,6 +43,36 @@ import logging
 import time
 
 logger = logging.getLogger("minicpm_ext.force_speak")
+
+
+def _tt_flush_tts(self) -> None:
+    """丢弃半句 TTS 缓冲并重置 token2wav,使被打断的 turn 不再吐残音。
+    只动 TTS 渲染状态,不碰 LLM KV(由调用方负责 turn_eos 收尾)。"""
+    self.tts_text_start_pos = 0
+    self.tts_past_key_values = None
+    self.tts_current_turn_start_time = None
+    self._reset_token2wav_for_new_turn()
+
+
+def duplex_stop(self):
+    """中断当前 speak turn 并 flush TTS,让 Talker 立刻安静(CUT 的"先停后说"之"停")。
+
+    与 duplex_force_speak 的步骤 0 同源,但不接新的发声:
+      - 若正在说话:feed <|turn_eos|> 收尾当前 turn(推进 LLM KV,保持后续聆听连贯)。
+      - flush TTS:丢弃尚未渲染/未发出的半句音频。
+    返回一个 listen 结果(end_of_turn),让 session 据此收尾并通知前端停播。
+    """
+    import torch
+
+    start_time = time.time()
+    with torch.no_grad():
+        if not getattr(self, "current_turn_ended", True):
+            self.total_ids.append(self.turn_eos_token_id)
+            self.decoder.feed(self.decoder.embed_token(self.turn_eos_token_id))
+            self.current_turn_ended = True
+        _tt_flush_tts(self)
+    logger.info("duplex_stop: turn ended + tts flushed")
+    return self._make_generate_result(start_time, is_listen=True, end_of_turn=True)
 
 
 def duplex_force_speak(self, text: str, prompt_wav_path=None, max_text_tokens: int = 256):
@@ -44,12 +86,12 @@ def duplex_force_speak(self, text: str, prompt_wav_path=None, max_text_tokens: i
         return self._make_generate_result(start_time, is_listen=True)
 
     with torch.no_grad():
-        # 0. 正在说话则先收尾
+        # 0. 正在说话则先收尾并 flush(打断:丢弃被截断那句的 TTS 残音,避免和新句子叠音)
         if not getattr(self, "current_turn_ended", True):
             self.total_ids.append(self.turn_eos_token_id)
             self.decoder.feed(self.decoder.embed_token(self.turn_eos_token_id))
             self.current_turn_ended = True
-            self._reset_token2wav_for_new_turn()
+            _tt_flush_tts(self)
 
         # 1. 开启 speak turn
         self.total_ids.append(self.tts_bos_token_id)
@@ -147,10 +189,34 @@ def duplexview_force_speak(self, text: str):
     )
 
 
+def duplexview_stop(self):
+    """挂到 DuplexView。镜像 duplexview_force_speak 的 dict -> DuplexGenerateResult 转换。
+    stop 不产音频(audio_data 恒为 None),用 is_listen/end_of_turn 通知 session 收尾。"""
+    from core.schemas.duplex import DuplexGenerateResult
+
+    result = self._model.duplex_stop()
+    g = result.get if isinstance(result, dict) else (lambda k, d=None: d)
+    return DuplexGenerateResult(
+        is_listen=g("is_listen", True),
+        text=g("text", ""),
+        audio_data=None,
+        end_of_turn=g("end_of_turn", True),
+        current_time=g("current_time", 0),
+        n_tokens=g("n_tokens"),
+        n_tts_tokens=g("n_tts_tokens"),
+    )
+
+
 def backend_force_speak(self, text: str):
     """挂到 PyTorchBackend。"""
     duplex_view = self.processor.set_duplex_mode()
     return duplex_view.force_speak(text)
+
+
+def backend_stop(self):
+    """挂到 PyTorchBackend。停当前 turn + flush TTS。"""
+    duplex_view = self.processor.set_duplex_mode()
+    return duplex_view.stop()
 
 
 def _find_duplex_capability_class():
@@ -171,22 +237,33 @@ def model_force_speak(self, text: str, **kw):
     return self.duplex.duplex_force_speak(text, **kw)
 
 
+def model_stop(self):
+    """挂到 MiniCPMO。委托给 self.duplex.duplex_stop。"""
+    if getattr(self, "duplex", None) is None:
+        raise RuntimeError("duplex 尚未初始化(需先 session.init/prepare)")
+    return self.duplex.duplex_stop()
+
+
 def install() -> None:
     """把 force_speak 挂到 DuplexCapability(实现)+ MiniCPMO(委托)+ DuplexView + PyTorchBackend。幂等。"""
     cap_cls = _find_duplex_capability_class()
     if getattr(cap_cls, "_tt_force_speak_installed", False):
         return
     cap_cls.duplex_force_speak = duplex_force_speak           # 真正实现
+    cap_cls.duplex_stop = duplex_stop                         # stop/flush 实现
 
     from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
     MiniCPMO.duplex_force_speak = model_force_speak           # 委托给 self.duplex
+    MiniCPMO.duplex_stop = model_stop
 
     from core.processors.unified import DuplexView
     DuplexView.force_speak = duplexview_force_speak
+    DuplexView.stop = duplexview_stop
 
     from core.processors.pytorch_backend import PyTorchBackend
     PyTorchBackend.duplex_force_speak = backend_force_speak
+    PyTorchBackend.duplex_stop = backend_stop
 
     cap_cls._tt_force_speak_installed = True
-    logger.info("force_speak installed on %s(impl) / MiniCPMO(delegate) / DuplexView / PyTorchBackend",
+    logger.info("force_speak+stop installed on %s(impl) / MiniCPMO(delegate) / DuplexView / PyTorchBackend",
                 cap_cls.__name__)
