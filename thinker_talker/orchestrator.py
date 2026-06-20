@@ -39,7 +39,7 @@ class Orchestrator:
         self._audio_buf = bytearray()  # 用户上行音频(float32 16k),供 ASR
         self._last_user_text = ""
         self._ai_audio_guard_until = 0.0  # AI 说话 + 尾窗:此刻之前丢弃上行音频(防自听)
-        self._asr_enabled = (cfg.asr_provider == "local") or bool(cfg.asr_api_key) or bool(cfg.openai_api_key)
+        self._asr_enabled = cfg.asr_enabled and ((cfg.asr_provider == "local") or bool(cfg.asr_api_key))
 
     def _tlog(self, tag: str, text: str) -> None:
         """把一条对话/决策写进 conversation log(便于核对大模型是否真被调用)。"""

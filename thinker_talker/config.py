@@ -24,6 +24,9 @@ class Config:
     # Talker
     talker_gateway_ws: str = "ws://localhost:8006/ws"
     talker_session_mode: str = "full_duplex"
+    # 旁路监听已存在的浏览器会话(经 gateway /observer 钩子)。设了它 -> run.py 走 observer 模式
+    # (浏览器当媒体端,编排层只旁观+注入);留空 -> TalkerClient 自己当客户端驱动会话(测试用)。
+    talker_observer_base: str = ""  # 例: https://localhost:8006
 
     # Thinker 后端选择: openai(GPT + 内置 web search) | sglang(自建)
     thinker_provider: str = "openai"
@@ -49,6 +52,7 @@ class Config:
     inject_wait_for_gap: bool = True
 
     # ASR: openai(转写API) | local(本地 faster-whisper,OpenAI 兼容接口)
+    asr_enabled: bool = True
     asr_provider: str = "openai"
     asr_base_url: str = "https://api.openai.com/v1"
     asr_model: str = "gpt-4o-mini-transcribe"
@@ -65,13 +69,18 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
+        openai_key = os.environ.get("OPENAI_TOKEN") or os.environ.get("OPENAI_API_KEY") or ""
+        asr_provider = os.environ.get("ASR_PROVIDER", cls.asr_provider)
+        # openai 转写复用 OpenAI key(没单独配 ASR_API_KEY 时);local 不需要 key
+        asr_api_key = os.environ.get("ASR_API_KEY") or (openai_key if asr_provider == "openai" else "")
         return cls(
             talker_gateway_ws=os.environ.get("TALKER_GATEWAY_WS", cls.talker_gateway_ws),
             talker_session_mode=os.environ.get("TALKER_SESSION_MODE", cls.talker_session_mode),
+            talker_observer_base=os.environ.get("TALKER_OBSERVER_BASE", cls.talker_observer_base),
             thinker_provider=os.environ.get("THINKER_PROVIDER", cls.thinker_provider),
             openai_model=os.environ.get("OPENAI_MODEL", cls.openai_model),
             openai_base_url=os.environ.get("OPENAI_BASE_URL", cls.openai_base_url),
-            openai_api_key=os.environ.get("OPENAI_TOKEN") or os.environ.get("OPENAI_API_KEY") or "",
+            openai_api_key=openai_key,
             thinker_base_url=os.environ.get("THINKER_BASE_URL", cls.thinker_base_url),
             thinker_model=os.environ.get("THINKER_MODEL", cls.thinker_model),
             thinker_api_key=os.environ.get("THINKER_API_KEY", cls.thinker_api_key),
@@ -84,6 +93,12 @@ class Config:
             inject_wait_for_gap=_b("INJECT_WAIT_FOR_GAP", cls.inject_wait_for_gap),
             asr_echo_guard_seconds=_f("ASR_ECHO_GUARD_SECONDS", cls.asr_echo_guard_seconds),
             asr_echo_sim_threshold=_f("ASR_ECHO_SIM_THRESHOLD", cls.asr_echo_sim_threshold),
+            asr_enabled=_b("ASR_ENABLED", cls.asr_enabled),
+            asr_provider=asr_provider,
+            asr_base_url=os.environ.get("ASR_BASE_URL", cls.asr_base_url),
+            asr_model=os.environ.get("ASR_MODEL", cls.asr_model),
+            asr_language=os.environ.get("ASR_LANGUAGE", cls.asr_language),
+            asr_api_key=asr_api_key,
             transcript_log_path=os.environ.get("TRANSCRIPT_LOG_PATH", cls.transcript_log_path),
             log_level=os.environ.get("LOG_LEVEL", cls.log_level),
         )
