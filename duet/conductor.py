@@ -58,6 +58,32 @@ class Conductor:
         """User voice onset while the model is speaking — logged only (^)."""
         self.log.emit(Kind.ONSET, self.epoch.current)
 
+    def reset(self) -> None:
+        """Clear conversation state for a fresh session (cancels any in-flight think)."""
+        if self._think_task and not self._think_task.done():
+            self._think_task.cancel()
+        self._think_task = None
+        self.task = TaskState(scene=self.task.scene)
+        self.epoch = EpochManager(1)
+        self.phase = Phase.LISTENING
+
+    async def on_interrupt(self) -> None:
+        """Barge-in with no new dispatch info yet: [CUT]+[WAIT], cancel, reset.
+
+        Used when the transport detects the user started a fresh turn while a
+        think is in flight (e.g. MiniCPM duplex emitted a new user/listen turn).
+        Stale results are dropped by the epoch guard; a later utterance can
+        re-dispatch.
+        """
+        if self.phase != Phase.THINKING:
+            return
+        old = self.epoch.current
+        self.log.emit(Kind.CUT, old)
+        self.log.emit(Kind.WAIT, old)
+        await self._cancel_think()
+        self.epoch.bump()
+        self.phase = Phase.LISTENING
+
     # --------------------------- internals ---------------------------
     def _ack_text(self, ir: IntentResult, fresh: bool) -> Optional[str]:
         if not self.immediate_ack:

@@ -38,6 +38,12 @@ _CITIES = {
     "shanghai": ("PVG", "Shanghai"), "beijing": ("PEK", "Beijing"),
     "los angeles": ("LAX", "Los Angeles"), "new york": ("JFK", "New York"),
 }
+_CHITCHAT = {
+    "", "hi", "hii", "hey", "hello", "yo", "ok", "okay", "yeah", "yes", "no", "sure",
+    "thanks", "thank you", "bye", "goodbye", "cool", "nice", "great", "got it",
+    "你好", "嗨", "好", "好的", "嗯", "嗯嗯", "对", "对的", "谢谢", "再见", "哈哈", "行",
+}
+
 _WEEKDAYS = {
     "周一": "Mon", "周二": "Tue", "周三": "Wed", "周四": "Thu", "周五": "Fri",
     "周六": "Sat", "周日": "Sun", "今天": "today", "明天": "tomorrow",
@@ -118,9 +124,19 @@ class IntentClassifier:
         r.is_new_info = bool(delta)
 
         knowledge = _contains(text, _KNOWLEDGE) is not None or _contains(low, _KNOWLEDGE) is not None
-        # fire a fresh think on a knowledge intent, OR when new info refines an existing task
         existing = bool(task and task.constraints)
-        r.fire_think = knowledge or (r.is_new_info and (existing or r.is_interrupt))
+        stripped = low.strip(" .,!?;:。，！？、")
+        is_chitchat = len(stripped) <= 2 or stripped in _CHITCHAT
+        if not is_chitchat:
+            # all-chit-chat: strip known chit-chat tokens; if nothing substantive remains
+            t = stripped
+            for w in sorted(_CHITCHAT, key=len, reverse=True):
+                if w:
+                    t = t.replace(w, "")
+            is_chitchat = len(t.strip(" ,.!?。，！？、")) == 0
+        # Demo-friendly: dispatch the thinking layer for ANY substantive utterance,
+        # not just keyword hits. Only pure greetings/acks are skipped.
+        r.fire_think = (not is_chitchat) or knowledge or (r.is_new_info and (existing or r.is_interrupt))
 
         bits = []
         if knowledge:
@@ -129,5 +145,7 @@ class IntentClassifier:
             bits.append("interrupt")
         if r.is_new_info:
             bits.append("new_info:" + ",".join(f"{k}={v}" for k, v in delta.items()))
+        if r.fire_think and not bits:
+            bits.append("substantive")
         r.reason = " ".join(bits) or "chit-chat"
         return r

@@ -66,6 +66,10 @@ class EventLog:
                 pass
         return ev
 
+    def clear(self) -> None:
+        self._events.clear()
+        self._t0 = None
+
     @property
     def events(self) -> List[Event]:
         return list(self._events)

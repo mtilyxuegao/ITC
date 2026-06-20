@@ -7,15 +7,18 @@
 #   # then read /home/justin/duet-endpoints.env for the URLs to point ThinkingClient at
 #
 #SBATCH -p defq
-#SBATCH --gres=gpu:8
-#SBATCH --exclusive
-#SBATCH --cpus-per-task=64
-#SBATCH --mem=512G
-#SBATCH --time=08:00:00
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=256G
+#SBATCH --time=12:00:00
 #SBATCH --job-name=duet-serve
 #SBATCH -o /home/justin/duet-serve.%j.log
 
 set -uo pipefail
+# Use vLLM's precompiled Triton/torch sampler instead of FlashInfer, which would
+# JIT-compile a kernel at startup and needs ninja+nvcc (absent on the compute node).
+# Without this, profile_run dies: flashinfer_sample -> run_ninja -> FileNotFoundError.
+export VLLM_USE_FLASHINFER_SAMPLER=0
 VLLM=/home/justin/duet-env/bin/vllm
 NODE=$(hostname)
 JOB=${SLURM_JOB_ID:-local}
@@ -28,8 +31,9 @@ nvidia-smi -L
 CUDA_VISIBLE_DEVICES=0,1 "$VLLM" serve Qwen/Qwen3.5-35B-A3B \
   --served-model-name qwen \
   --tensor-parallel-size 2 --host 0.0.0.0 --port 8001 \
-  --max-model-len 32768 \
-  --enable-auto-tool-choice --tool-call-parser hermes \
+  --max-model-len 131072 \
+  --gdn-prefill-backend triton \
+  --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 \
   > /home/justin/vllm-qwen.$JOB.log 2>&1 &
 QWEN_PID=$!
 
@@ -37,8 +41,8 @@ QWEN_PID=$!
 CUDA_VISIBLE_DEVICES=2,3 "$VLLM" serve google/gemma-4-26B-A4B-it \
   --served-model-name gemma \
   --tensor-parallel-size 2 --host 0.0.0.0 --port 8002 \
-  --max-model-len 32768 \
-  --enable-auto-tool-choice --tool-call-parser hermes \
+  --max-model-len 131072 \
+  --enable-auto-tool-choice --tool-call-parser gemma4 --reasoning-parser gemma4 \
   > /home/justin/vllm-gemma.$JOB.log 2>&1 &
 GEMMA_PID=$!
 
