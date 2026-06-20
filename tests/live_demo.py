@@ -1,6 +1,7 @@
-"""Live demo runner:旁路监听浏览器当前会话,由 35B Thinker 自动判断是否打断。
-不种任何上下文 —— 上下文来自真实观察到的小模型草稿。
-运行: .venv/bin/python tests/live_demo.py
+"""Live demo runner(自动重连版):持续盯着 gateway,谁的会话活着就附上去。
+会话断了自动等下一个,你随便刷新都不用重启。
+由 35B Thinker 自动判断是否打断;对话记进 conversation.log。
+运行: setsid .venv/bin/python tests/live_demo.py &
 """
 import asyncio
 import logging
@@ -10,30 +11,60 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from thinker_talker.config import Config
+from thinker_talker.factory import make_thinker
 from thinker_talker.orchestrator import Orchestrator
 from thinker_talker.talker import GatewayObserver
-from thinker_talker.thinker import SGLangThinker
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+except Exception:
+    pass
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 log = logging.getLogger("live")
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 async def main():
     cfg = Config(
-        thinker_base_url="http://localhost:30000/v1",
-        thinker_model="Qwen/Qwen3.5-35B-A3B",
-        thinker_abort_url="http://localhost:30000/abort_request",
+        thinker_provider=os.environ.get("THINKER_PROVIDER", "openai"),  # GPT 5.4 + web_search
+        openai_model=os.environ.get("OPENAI_MODEL", "gpt-5.4"),
+        openai_api_key=os.environ.get("OPENAI_TOKEN") or os.environ.get("OPENAI_API_KEY") or "",
         thinker_tick_seconds=1.5,
         cut_min_confidence=0.7,
-        transcript_log_path=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "conversation.log"),
+        transcript_log_path=os.path.join(REPO, "conversation.log"),
     )
-    observer = GatewayObserver(f"https://localhost:8006")
-    async with SGLangThinker(cfg) as thinker:
-        orch = Orchestrator(cfg, observer, thinker)
-        await observer.connect()
-        log.info("✅ observing live session: %s — 开始监听,聊跑偏话题会被打断", observer.session_id)
-        await asyncio.gather(orch.consume_talker(), orch.thinker_loop())
+    base = "https://localhost:8006"
+    log.info("live runner up (Thinker=%s/%s) — 等待浏览器会话(自动附着/重连)…",
+             cfg.thinker_provider, cfg.openai_model)
+    async with make_thinker(cfg) as thinker:
+        while True:
+            observer = GatewayObserver(base)
+            sid = await observer.discover_session(timeout_s=6.0)
+            if not sid:
+                await asyncio.sleep(1.0)
+                continue
+            observer.session_id = sid
+            try:
+                await observer.connect()
+            except Exception as e:  # noqa: BLE001
+                log.warning("connect failed: %s", e)
+                continue
+            log.info("✅ 已附着会话 %s — 开始监听(聊跑偏话题会被打断)", sid)
+            orch = Orchestrator(cfg, observer, thinker)
+            try:
+                await asyncio.gather(orch.consume_talker(), orch.thinker_loop())
+            except Exception as e:  # noqa: BLE001
+                log.warning("session loop error: %s", e)
+            finally:
+                await observer.close()
+            log.info("会话 %s 结束,等待下一个…", sid)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

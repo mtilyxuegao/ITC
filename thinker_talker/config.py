@@ -25,13 +25,22 @@ class Config:
     talker_gateway_ws: str = "ws://localhost:8006/ws"
     talker_session_mode: str = "full_duplex"
 
-    # Thinker
+    # Thinker 后端选择: openai(GPT + 内置 web search) | sglang(自建)
+    thinker_provider: str = "openai"
+
+    # Thinker — SGLang(自建)
     thinker_base_url: str = "http://localhost:30000/v1"
     thinker_model: str = "Qwen/Qwen3.5-35B-A3B"
     thinker_api_key: str = "EMPTY"
     thinker_abort_url: str = "http://localhost:30000/abort_request"
     thinker_temperature: float = 0.6
     thinker_max_tokens: int = 512
+
+    # Thinker — OpenAI(GPT 5.4 + Responses API 内置 web_search)
+    openai_model: str = "gpt-5.4"
+    openai_base_url: str = "https://api.openai.com/v1"
+    # key 从环境 OPENAI_TOKEN(或 OPENAI_API_KEY)读
+    openai_api_key: str = ""
 
     # 策略
     thinker_tick_seconds: float = 1.0
@@ -49,6 +58,10 @@ class Config:
         return cls(
             talker_gateway_ws=os.environ.get("TALKER_GATEWAY_WS", cls.talker_gateway_ws),
             talker_session_mode=os.environ.get("TALKER_SESSION_MODE", cls.talker_session_mode),
+            thinker_provider=os.environ.get("THINKER_PROVIDER", cls.thinker_provider),
+            openai_model=os.environ.get("OPENAI_MODEL", cls.openai_model),
+            openai_base_url=os.environ.get("OPENAI_BASE_URL", cls.openai_base_url),
+            openai_api_key=os.environ.get("OPENAI_TOKEN") or os.environ.get("OPENAI_API_KEY") or "",
             thinker_base_url=os.environ.get("THINKER_BASE_URL", cls.thinker_base_url),
             thinker_model=os.environ.get("THINKER_MODEL", cls.thinker_model),
             thinker_api_key=os.environ.get("THINKER_API_KEY", cls.thinker_api_key),

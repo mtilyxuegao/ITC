@@ -13,3 +13,8 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# runtime artifacts
+conversation.log
+live_demo.log
+qwen_dl.log
