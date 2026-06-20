@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from .config import Config
 from .directives import Action, Directive
@@ -31,6 +32,20 @@ class Orchestrator:
         self.state = SessionState()
         self.arbiter = FloorArbiter(self.state)
         self._stop = asyncio.Event()
+        self._tlog_path = cfg.transcript_log_path or ""
+
+    def _tlog(self, tag: str, text: str) -> None:
+        """把一条对话/决策写进 conversation log(便于核对大模型是否真被调用)。"""
+        if not text:
+            return
+        line = f"{time.strftime('%H:%M:%S')} [{tag}] {text}"
+        logger.info("%s", line)
+        if self._tlog_path:
+            try:
+                with open(self._tlog_path, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except Exception:
+                pass
 
     # ---------- 打断:人 → AI ----------
     async def on_user_barge(self) -> None:
@@ -48,6 +63,7 @@ class Orchestrator:
             if ev.kind == "text" and ev.text:
                 # 小模型草稿:既是给用户的即时回答,也是给 Thinker 的桥接素材
                 self.state.add_turn("talker", ev.text)
+                self._tlog("小模型", ev.text)
                 self.state.talker_state = TalkerState.SPEAKING
                 if self.state.floor is Floor.IDLE:
                     self.arbiter.take(Floor.TALKER)
@@ -75,13 +91,21 @@ class Orchestrator:
                 continue
             epoch_snapshot = self.state.snapshot_epoch()
             try:
-                directive = await self.thinker.think(ctx)
+                directive = await self.thinker.think(
+                    ctx, on_search=lambda q, r: self._tlog("大模型·搜索", f"{q} → {r[:100].replace(chr(10), ' ')}")
+                )
             except asyncio.CancelledError:
                 logger.debug("thinker tick aborted")
                 continue
             except Exception as e:  # noqa: BLE001
                 logger.warning("thinker error: %s", e)
                 continue
+            # 每个 tick 都记一行,证明大模型确实在被调用
+            _d = directive
+            self._tlog("大模型", f"{_d.action.value}"
+                       + (f" conf={_d.confidence:.2f}" if _d.action.value == "CUT" else "")
+                       + (f' "{_d.text}"' if _d.text else "")
+                       + (f" — {_d.reason[:50]}" if _d.reason else ""))
             await self._apply_directive(directive, epoch_snapshot)
 
     async def _apply_directive(self, d: Directive, epoch_snapshot: int) -> None:
@@ -100,6 +124,7 @@ class Orchestrator:
                 return
             self.arbiter.take(Floor.THINKER)
             await self.talker.force_speak(d.text)
+            self._tlog("→小模型说出(INJECT)", d.text)
             self.state.add_turn("talker", d.text)
             self.arbiter.release()
             return
@@ -111,9 +136,9 @@ class Orchestrator:
             # 路线2(force_speak)直接让模型说 redirect;不加 [CUT] 前缀(那是已弃用的
             # system-prompt 软触发方案,否则模型会把"[CUT]"当文本念出来)。
             await self.talker.force_speak(d.text)
+            self._tlog("→小模型打断说出(CUT)", d.text)
             self.state.add_turn("talker", d.text)
             self.arbiter.release()
-            logger.info("CUT fired: %r (conf=%.2f)", d.text[:50], d.confidence)
 
     def _cut_allowed(self, d: Directive) -> bool:
         if not d.text:

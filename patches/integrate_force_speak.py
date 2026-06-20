@@ -110,19 +110,39 @@ BC_REP = (
 ) + BC_ANCHOR
 
 
-def _patch_file(path: str, anchor: str, replacement: str) -> str:
-    """幂等地把 anchor 替换为 replacement;已含 MARKER 则跳过。返回状态串。"""
+def _patch_file(path: str, anchor: str, replacement: str, marker: str = MARKER) -> str:
+    """幂等地把 anchor 替换为 replacement;已含 marker 则跳过。返回状态串。"""
     if not os.path.isfile(path):
         return f"缺文件 {path}(跳过)"
     src = open(path, encoding="utf-8").read()
-    if MARKER in src:
-        return f"{os.path.basename(path)} 已集成,跳过"
+    if marker in src:
+        return f"{os.path.basename(path)} 已含[{marker}],跳过"
     if anchor not in src:
         return f"⚠ {os.path.basename(path)} 锚点未命中(跳过)"
     if not os.path.exists(path + ".tt.bak"):
         shutil.copy(path, path + ".tt.bak")
     open(path, "w", encoding="utf-8").write(src.replace(anchor, replacement, 1))
-    return f"{os.path.basename(path)} 集成完成"
+    return f"{os.path.basename(path)} 集成完成[{marker}]"
+
+
+# --- server.py:给 Talker 会话默认 prompt 前置"对不确定/时间敏感问题拖延、不编造"的规则 ---
+TALKER_PROMPT_MARKER = "tt-talker-prompt"
+TALKER_ANCHOR = (
+    "                system_prompt_text=_coalesce(\n"
+    "                    params.get(\"system_prompt\"),\n"
+    "                    params.get(\"instructions\"),\n"
+    "                    default=\"You are a helpful assistant.\",\n"
+    "                ),"
+)
+TALKER_REP = (
+    "                system_prompt_text=(  # " + TALKER_PROMPT_MARKER + "\n"
+    "                    \"你是简洁的实时语音助手。严格遵守:1) 不确定或不知道的,绝不编造,尤其不要给出具体数字、价格、日期或事实。\"\n"
+    "                    \"2) 时间敏感信息(股价、汇率、天气、新闻、今天日期、最新数据等)你没有实时联网能力,不要直接报具体数值。\"\n"
+    "                    \"3) 遇到这类问题,只用一句话拖延确认(例如'让我查一下最新的'),把具体答案留到稍后,不要急着下结论。\"\n"
+    "                    \"4) 回答简短、口语化、一两句话。\\n\\n\"\n"
+    "                    + (_coalesce(params.get(\"system_prompt\"), params.get(\"instructions\"), default=\"\") or \"\")\n"
+    "                ),"
+)
 
 
 def _server_path(demo: str) -> str:
@@ -177,6 +197,8 @@ def apply(demo: str) -> None:
     # 3. 让 force_speak 走通公网路径:worker.py 转发层 + runtime backend 客户端
     print("[worker.py]", _patch_file(os.path.join(demo, "worker.py"), WORKER_ANCHOR, WORKER_REP))
     print("[backend_client.py]", _patch_file(os.path.join(demo, "runtime", "backend_client.py"), BC_ANCHOR, BC_REP))
+    # 4. 给 Talker 会话默认 prompt 加"拖延/不编造"规则
+    print("[talker-prompt]", _patch_file(sp, TALKER_ANCHOR, TALKER_REP, marker=TALKER_PROMPT_MARKER))
     print("\n✅ 完成。让改动生效:重建 worker 镜像或挂载改动文件(见 patches/README.md)。")
 
 

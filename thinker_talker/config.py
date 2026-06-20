@@ -39,6 +39,9 @@ class Config:
     interrupt_priority: str = "human_wins"  # human_wins | ai_can_override
     inject_wait_for_gap: bool = True
 
+    # 对话 log:记录小模型草稿 + 大模型决策/搜索/插话(用于核对大模型是否真被调用)
+    transcript_log_path: str = ""
+
     log_level: str = "info"
 
     @classmethod
@@ -56,5 +59,6 @@ class Config:
             cut_min_confidence=_f("CUT_MIN_CONFIDENCE", cls.cut_min_confidence),
             interrupt_priority=os.environ.get("INTERRUPT_PRIORITY", cls.interrupt_priority),
             inject_wait_for_gap=_b("INJECT_WAIT_FOR_GAP", cls.inject_wait_for_gap),
+            transcript_log_path=os.environ.get("TRANSCRIPT_LOG_PATH", cls.transcript_log_path),
             log_level=os.environ.get("LOG_LEVEL", cls.log_level),
         )
