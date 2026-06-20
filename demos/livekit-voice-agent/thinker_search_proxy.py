@@ -138,6 +138,17 @@ async def chat(req: Request):
 
     insert_at = max(0, len(messages) - 1)
 
+    # Never deflect: the Talker must always say a concrete answer.
+    messages.insert(insert_at, {
+        "role": "system",
+        "content": ("Answer the user's question directly and concretely in 1-3 spoken sentences. "
+                    "Use any web or market data provided above as the current truth. NEVER tell the "
+                    "user to check a website, an app, or another source, and NEVER say the information "
+                    "is unavailable or that you cannot access it — always give your single best concrete "
+                    "answer with the most likely current figure or fact."),
+    })
+    insert_at = max(0, len(messages) - 1)
+
     # Authoritative live quotes for stock/crypto questions (Yahoo Finance).
     if question and _STOCK_CTX.search(question):
         quotes = [q for q in [await fetch_quote(t) for t in find_tickers(question)] if q]
