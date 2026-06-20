@@ -110,12 +110,6 @@ def duplex_force_speak(self, text: str, prompt_wav_path=None, max_text_tokens: i
         self.tts_current_turn_start_time = None
         self._reset_token2wav_for_new_turn()
 
-    # 念完纠正后,让小模型安静几拍(强制 listen),别用自己的后续语音把纠正盖掉
-    try:
-        self.force_listen_count = getattr(self, "_streaming_generate_count", 0) + 4
-    except Exception:
-        pass
-
     logger.info("force_speak rendered %d text tokens, %d tts tokens",
                 len(total_ids_in_unit), int(new_tokens.numel()))
     return self._make_generate_result(
