@@ -216,6 +216,7 @@ class Orchestrator:
                     self.state.add_turn("user", text)
                     self._tlog("用户(ASR)", text)
                     await self._send_status(stage="asr", text=text)
+                    await self._send_status(stage="asr", text=text)
 
     async def run(self) -> None:
         await self.talker.connect()
