@@ -1,0 +1,11 @@
+# Conductor (control layer) — pure Python, no GPU.
+aiohttp>=3.9
+websockets>=12
+pytest>=7.4
+
+# Thinking layer (served separately, on a GPU node):
+#   vllm>=0.16    # serve Qwen3.5-35B-A3B, OpenAI-compatible /v1
+# Interaction layer (served separately, via demos/minicpm-o-4.5-fullduplex/deploy.sh):
+#   the MiniCPM-o 4.5 duplex Docker stack
+# Conductor "ears" (real STT/VAD, optional for the live system):
+#   silero-vad ; faster-whisper  (or nvidia parakeet)
