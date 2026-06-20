@@ -34,8 +34,9 @@ import aiohttp
 from aiohttp import web
 
 from .conductor import Conductor
+from .direct_search import DirectSearchClient
 from .events import Event, EventLog, Kind
-from .hermes_thinking import HermesThinkingClient
+from .hermes_thinking import HermesThinkingClient  # kept for fallback / reference
 from .state import Phase
 from .tts import tts_pcm_f32
 from .write_seam import RecordingSpeaker
@@ -113,9 +114,12 @@ class Hub:
         self.recent: list[str] = []    # recent STT transcripts (context for the router)
         self.log = EventLog()
         self.log.subscribe(self._on_event)
+        # FAST research path: ddgs (the ~1-2s bottleneck) + ONE LLM summarize (~120ms), skipping
+        # hermes's decide-hop + agent-framework overhead (the router already produced the query).
+        # ~3-6s -> ~1.5-2.2s. Swap back to HermesThinkingClient(THINK_URL, model=MODEL,
+        # enabled_toolsets=TOOLSETS, max_iterations=3) if multi-step agentic research is needed.
         self.conductor = Conductor(
-            thinking=HermesThinkingClient(THINK_URL, model=MODEL, enabled_toolsets=TOOLSETS,
-                                          max_iterations=3),   # speed > depth: 1 search + answer
+            thinking=DirectSearchClient(THINK_URL, model=MODEL),
             speaker=RecordingSpeaker(), log=self.log, scene="duplex")
 
     def _on_event(self, ev: Event) -> None:
