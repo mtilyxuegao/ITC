@@ -54,8 +54,20 @@ async def main():
                 continue
             log.info("✅ 已附着会话 %s — 开始监听(聊跑偏话题会被打断)", sid)
             orch = Orchestrator(cfg, observer, thinker)
+
+            async def _watch_newer():
+                # 刷新会生成更新的会话:发现后主动断开旧的,触发重新附着(治"刷新挂掉")
+                while not orch._stop.is_set():
+                    await asyncio.sleep(2.0)
+                    latest = await observer.discover_session(timeout_s=0.5)
+                    if latest and latest != sid:
+                        log.info("检测到更新会话 %s,切换", latest)
+                        await observer.close()  # 断开当前 -> consume_talker 结束 -> 重新发现
+                        return
+
             try:
-                await asyncio.gather(orch.consume_talker(), orch.thinker_loop(), orch.asr_loop())
+                await asyncio.gather(orch.consume_talker(), orch.thinker_loop(),
+                                     orch.asr_loop(), _watch_newer())
             except Exception as e:  # noqa: BLE001
                 log.warning("session loop error: %s", e)
             finally:
