@@ -101,7 +101,7 @@ class SessionState:
     def render_context(self, max_turns: int = 12) -> str:
         lines = []
         for t in self.recent_context(max_turns):
-            who = "用户" if t.speaker == "user" else "助手(小模型草稿)"
+            who = "User" if t.speaker == "user" else "Assistant (draft)"
             lines.append(f"{who}: {t.text}")
         return "\n".join(lines)
 
