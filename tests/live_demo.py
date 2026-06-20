@@ -28,10 +28,21 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 async def main():
+    # ASR 后端: local(本地 faster-whisper :8771) | openai
+    asr_provider = os.environ.get("ASR_PROVIDER", "local")
+    if asr_provider == "openai":
+        asr_base, asr_model, asr_key = "https://api.openai.com/v1", "gpt-4o-mini-transcribe", \
+            (os.environ.get("OPENAI_TOKEN") or os.environ.get("OPENAI_API_KEY") or "")
+    else:
+        asr_base = os.environ.get("ASR_BASE_URL", "http://localhost:8771/v1")
+        asr_model = os.environ.get("ASR_MODEL", "Systran/faster-whisper-large-v3")
+        asr_key = ""
+
     cfg = Config(
         thinker_provider=os.environ.get("THINKER_PROVIDER", "openai"),  # GPT 5.4 + web_search
         openai_model=os.environ.get("OPENAI_MODEL", "gpt-5.4"),
         openai_api_key=os.environ.get("OPENAI_TOKEN") or os.environ.get("OPENAI_API_KEY") or "",
+        asr_provider=asr_provider, asr_base_url=asr_base, asr_model=asr_model, asr_api_key=asr_key,
         thinker_tick_seconds=1.5,
         cut_min_confidence=0.7,
         transcript_log_path=os.path.join(REPO, "conversation.log"),

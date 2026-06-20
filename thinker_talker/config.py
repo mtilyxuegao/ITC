@@ -48,6 +48,13 @@ class Config:
     interrupt_priority: str = "human_wins"  # human_wins | ai_can_override
     inject_wait_for_gap: bool = True
 
+    # ASR: openai(转写API) | local(本地 faster-whisper,OpenAI 兼容接口)
+    asr_provider: str = "openai"
+    asr_base_url: str = "https://api.openai.com/v1"
+    asr_model: str = "gpt-4o-mini-transcribe"
+    asr_language: str = "zh"
+    asr_api_key: str = ""  # local 不需要
+
     # 对话 log:记录小模型草稿 + 大模型决策/搜索/插话(用于核对大模型是否真被调用)
     transcript_log_path: str = ""
 

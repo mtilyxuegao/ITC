@@ -38,7 +38,7 @@ class Orchestrator:
         self._last_thought_ctx = None  # 去重:上下文没变就不重复打扰大模型
         self._audio_buf = bytearray()  # 用户上行音频(float32 16k),供 ASR
         self._last_user_text = ""
-        self._asr_enabled = bool(cfg.openai_api_key)
+        self._asr_enabled = (cfg.asr_provider == "local") or bool(cfg.asr_api_key) or bool(cfg.openai_api_key)
 
     def _tlog(self, tag: str, text: str) -> None:
         """把一条对话/决策写进 conversation log(便于核对大模型是否真被调用)。"""
@@ -197,6 +197,17 @@ class Orchestrator:
             return False
         return True
 
+    @staticmethod
+    def _rms(pcm_bytes: bytes) -> float:
+        import array
+        f = array.array("f")
+        f.frombytes(pcm_bytes[: (len(pcm_bytes) // 4) * 4])
+        if not len(f):
+            return 0.0
+        step = max(1, len(f) // 4000)  # 抽样,降开销
+        vals = f[::step]
+        return (sum(x * x for x in vals) / len(vals)) ** 0.5
+
     async def asr_loop(self) -> None:
         """周期性把最近的用户上行音频转写成文字,作为'用户'轮次喂给大模型。"""
         if not self._asr_enabled:
@@ -209,8 +220,12 @@ class Orchestrator:
                 buf = bytes(self._audio_buf)
                 if len(buf) < 16000 * 4:  # < 1s
                     continue
-                text = await transcribe(s, self.cfg.openai_api_key, buf,
-                                        base_url=self.cfg.openai_base_url)
+                if self._rms(buf) < 0.006:  # 近静音不转写(避免 whisper 幻觉出字幕之类)
+                    continue
+                text = await transcribe(s, self.cfg.asr_api_key, buf,
+                                        base_url=self.cfg.asr_base_url,
+                                        model=self.cfg.asr_model,
+                                        language=self.cfg.asr_language)
                 if text and text != self._last_user_text and len(text) >= 2:
                     self._last_user_text = text
                     self.state.add_turn("user", text)

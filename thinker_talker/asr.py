@@ -45,7 +45,7 @@ async def transcribe(session: aiohttp.ClientSession, api_key: str, pcm_bytes: by
     form.add_field("model", model)
     form.add_field("language", language)
     form.add_field("file", wav, filename="audio.wav", content_type="audio/wav")
-    headers = {"Authorization": f"Bearer {api_key}"}
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}  # local 无需鉴权
     url = base_url.rstrip("/") + "/audio/transcriptions"
     try:
         async with session.post(url, data=form, headers=headers) as resp:
