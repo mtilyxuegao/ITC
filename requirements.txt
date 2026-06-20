@@ -1,0 +1,5 @@
+# ITC · Thinker–Talker 编排层依赖
+# (小模型 MiniCPM-o 的推理依赖见 demos/minicpm-o-4.5-fullduplex;此处只列编排层)
+aiohttp>=3.9
+websockets>=12.0
+python-dotenv>=1.0

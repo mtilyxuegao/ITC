@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ITC · Talker–Thinker 双脑实时交互架构</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --ink:#e7ebf0; --muted:#9aa4b2;
+    --line:#2a2f3a; --accent:#5b9dff; --accent2:#7c5cff; --warn:#ffb454; --ok:#56d364; --bad:#ff6b6b;
+    --talker:#2bb3a3; --think:#7c5cff; --orch:#5b9dff;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:48px 22px 96px}
+  header.hero{border-bottom:1px solid var(--line);padding-bottom:26px;margin-bottom:34px}
+  .eyebrow{color:var(--accent);font-weight:700;letter-spacing:.14em;font-size:12px;text-transform:uppercase}
+  h1{font-size:30px;line-height:1.25;margin:.35em 0 .25em}
+  h2{font-size:21px;margin:46px 0 14px;padding-top:14px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 8px;color:#cdd6e2}
+  p{margin:.6em 0}
+  .sub{color:var(--muted);max-width:70ch}
+  code{background:#11141a;border:1px solid var(--line);border-radius:5px;padding:.08em .42em;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.86em;color:#d6def0}
+  .tldr{background:linear-gradient(135deg,#1a2030,#181c26);border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:12px;padding:18px 20px;margin:22px 0}
+  .tldr b{color:#fff}
+  .grid{display:grid;gap:14px}
+  @media(min-width:720px){.cols-2{grid-template-columns:1fr 1fr}.cols-3{grid-template-columns:1fr 1fr 1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h3{margin-top:0}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;letter-spacing:.03em}
+  .pill.talker{background:rgba(43,179,163,.16);color:#5fe0d0;border:1px solid rgba(43,179,163,.35)}
+  .pill.think{background:rgba(124,92,255,.16);color:#b3a2ff;border:1px solid rgba(124,92,255,.35)}
+  .pill.orch{background:rgba(91,157,255,.16);color:#9cc3ff;border:1px solid rgba(91,157,255,.35)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cdd6e2;font-weight:600}
+  td code{font-size:.82em}
+  .ok{color:var(--ok);font-weight:700}.warn{color:var(--warn);font-weight:700}.bad{color:var(--bad);font-weight:700}
+  .flow{counter-reset:step;list-style:none;padding:0;margin:14px 0}
+  .flow li{position:relative;padding:10px 12px 10px 46px;margin:8px 0;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .flow li::before{counter-increment:step;content:counter(step);position:absolute;left:12px;top:10px;
+    width:24px;height:24px;border-radius:50%;background:var(--accent);color:#06101f;font-weight:800;font-size:13px;
+    display:flex;align-items:center;justify-content:center}
+  .flow li.cut::before{background:var(--bad);color:#240505}
+  .note{background:#15110a;border:1px solid #3a2e16;border-left:3px solid var(--warn);border-radius:10px;padding:14px 16px;margin:16px 0}
+  .note.q{background:#0c1424;border-color:#1d3357;border-left-color:var(--accent)}
+  svg{width:100%;height:auto;display:block}
+  .legend{font-size:13px;color:var(--muted);margin-top:8px}
+  .legend b{color:var(--ink)}
+  .kbd{font-family:ui-monospace,monospace;background:#11141a;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:.82em}
+  footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+  a{color:var(--accent)}
+  .tag{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">ITC · 复刻 Thinking Machines Interaction Model</div>
+  <h1>Talker–Thinker 双脑实时交互架构</h1>
+  <p class="sub">小模型 <b>MiniCPM-o 4.5</b>(全双工 Talker)做实时听·看·说;大模型 <b>Qwen3.5-35B-A3B</b>(异步 Thinker)在旁持续思考、随时插话或叫停。支持<b>双向打断</b>:人能打断 AI,AI 也能打断人。</p>
+  <p class="tag">最新方案快照 · C 模式(异步旁路)+ 双向打断 · 基于已跑通的 MiniCPM-o demo 代码实测</p>
+</header>
+
+<div class="tldr">
+  <b>TL;DR</b> — Talker 实时驱动对话;Thinker(35B/3B 激活,SGLang 上跑)异步监看,输出 <code>NOOP / INJECT / CUT</code> 三类指令。
+  新增编排层负责 <b>epoch 围栏</b>(同时作废过期答案与过期 CUT)和 <b>floor arbiter</b>(谁持麦)。
+  人打断 AI = <span class="ok">原生</span>(force_listen);AI 打断人(CUT)= <span class="warn">需小改小模型</span>(break + 注入)。
+  Thinker 取消 = <span class="ok">SGLang 实时 abort</span>。
+</div>
+
+<h2>1 · 角色分工</h2>
+<div class="grid cols-3">
+  <div class="card">
+    <span class="pill talker">Talker · 小</span>
+    <h3>MiniCPM-o 4.5</h3>
+    <p class="sub">全双工,~1s 微轮次(<code>chunk_ms</code>≈1000)。端到端 audio→audio,听/看/说一体,自带用户打断。跑原生 PyTorch duplex worker(已在 2×H100 上跑通)。</p>
+  </div>
+  <div class="card">
+    <span class="pill think">Thinker · 大</span>
+    <h3>Qwen3.5-35B-A3B</h3>
+    <p class="sub">MoE,35B 总参 / <b>仅 3B 激活</b> → 便宜到可以高频跑。跑在 <b>SGLang</b>(轮次制、高吞吐、<b>支持实时 abort</b>)。纯文本进出。</p>
+  </div>
+  <div class="card">
+    <span class="pill orch">Orchestrator · 新</span>
+    <h3>编排层</h3>
+    <p class="sub">贴在网关上。维护滚动上下文、epoch 围栏、floor arbiter;把 Talker 事件转给 Thinker,把 Thinker 指令落回 Talker。<b>不进模型权重,是外挂调度。</b></p>
+  </div>
+</div>
+
+<div class="note">
+  <b>因为换了 35B-A3B,方案简化了一层:</b>原计划的"便宜监工 + 贵大脑"两级 Thinker,在 3B 激活下基本没必要——
+  直接让 35B-A3B 既当监工又当大脑、高频重跑即可。复杂度下降。
+</div>
+
+<h2>2 · 整体架构</h2>
+<div class="card" style="padding:20px">
+<svg viewBox="0 0 960 470" role="img" aria-label="架构图">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#9aa4b2"/>
+    </marker>
+    <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#ff6b6b"/>
+    </marker>
+  </defs>
+
+  <!-- boxes -->
+  <g font-family="sans-serif">
+    <!-- client -->
+    <rect x="30" y="190" width="150" height="92" rx="12" fill="#171a21" stroke="#2a2f3a"/>
+    <text x="105" y="225" fill="#e7ebf0" font-size="15" font-weight="700" text-anchor="middle">浏览器</text>
+    <text x="105" y="247" fill="#9aa4b2" font-size="12" text-anchor="middle">瘦客户端</text>
+    <text x="105" y="265" fill="#9aa4b2" font-size="12" text-anchor="middle">无需 GPU · WebRTC</text>
+
+    <!-- orchestrator -->
+    <rect x="300" y="40" width="540" height="92" rx="12" fill="#13203a" stroke="#5b9dff"/>
+    <text x="570" y="72" fill="#9cc3ff" font-size="15" font-weight="800" text-anchor="middle">编排层 Orchestrator</text>
+    <text x="570" y="95" fill="#cdd6e2" font-size="12.5" text-anchor="middle">滚动上下文 · epoch 围栏(守双向) · floor arbiter(谁持麦) · 路由</text>
+    <text x="570" y="115" fill="#9aa4b2" font-size="11.5" text-anchor="middle">解析 Thinker 控制流 → 落成 force_listen / force_speak / inject</text>
+
+    <!-- talker -->
+    <rect x="300" y="330" width="270" height="100" rx="12" fill="#11211f" stroke="#2bb3a3"/>
+    <text x="435" y="362" fill="#5fe0d0" font-size="15" font-weight="800" text-anchor="middle">MiniCPM-o duplex · Talker</text>
+    <text x="435" y="384" fill="#cdd6e2" font-size="12" text-anchor="middle">听 · 看 · 说 / ~1s 微轮次</text>
+    <text x="435" y="403" fill="#9aa4b2" font-size="11.5" text-anchor="middle">原生用户打断(force_listen)</text>
+
+    <!-- thinker -->
+    <rect x="660" y="330" width="180" height="100" rx="12" fill="#191333" stroke="#7c5cff"/>
+    <text x="750" y="362" fill="#b3a2ff" font-size="14.5" font-weight="800" text-anchor="middle">Qwen3.5-35B-A3B</text>
+    <text x="750" y="384" fill="#cdd6e2" font-size="12" text-anchor="middle">Thinker(异步)</text>
+    <text x="750" y="403" fill="#9aa4b2" font-size="11.5" text-anchor="middle">SGLang · 实时 abort</text>
+  </g>
+
+  <!-- arrows -->
+  <g stroke="#9aa4b2" stroke-width="1.6" fill="none">
+    <!-- client <-> talker (media) -->
+    <line x1="180" y1="248" x2="298" y2="330" marker-end="url(#arr)"/>
+    <line x1="300" y1="360" x2="182" y2="270" marker-end="url(#arr)"/>
+    <!-- talker -> orch (up) -->
+    <line x1="400" y1="330" x2="400" y2="134" marker-end="url(#arr)"/>
+    <!-- orch -> talker (down) -->
+    <line x1="500" y1="132" x2="500" y2="328" marker-end="url(#arr)"/>
+    <!-- orch <-> thinker -->
+    <line x1="720" y1="132" x2="720" y2="328" marker-end="url(#arr)"/>
+    <line x1="800" y1="330" x2="800" y2="134" marker-end="url(#arr)"/>
+  </g>
+  <!-- the CUT highlight arrow orch->talker -->
+  <g stroke="#ff6b6b" stroke-width="2" fill="none" stroke-dasharray="5 4">
+    <line x1="540" y1="132" x2="540" y2="328" marker-end="url(#arrR)"/>
+  </g>
+
+  <!-- arrow labels -->
+  <g font-family="sans-serif" font-size="11" fill="#9aa4b2">
+    <text x="205" y="300" >音视频流(WebRTC)</text>
+    <text x="300" y="240" text-anchor="end" transform="rotate(-90 360 240)" >草稿/打断事件</text>
+    <text x="512" y="245" >指令落地</text>
+    <text x="555" y="200" fill="#ff6b6b" font-weight="700">CUT→打断</text>
+    <text x="612" y="200" text-anchor="end">上下文</text>
+    <text x="808" y="245">NOOP/INJECT/CUT</text>
+  </g>
+</svg>
+<p class="legend"><b>数据流:</b> 浏览器 ↔ Talker 走 WebRTC 音视频;Talker → 编排层送"自己的草稿文本 + 打断事件";编排层 → Thinker 送滚动上下文;Thinker → 编排层回 <code>NOOP/INJECT/CUT</code> 指令;编排层 → Talker 落成 <code>force_listen / force_speak / 文本注入</code>。红色虚线 = AI 主动打断(CUT)。</p>
+</div>
+
+<h2>3 · 双向打断(本方案的核心)</h2>
+<table>
+  <tr><th>方向</th><th>触发</th><th>落到 demo 代码</th><th>代价</th></tr>
+  <tr>
+    <td><b>人 → AI</b><br>(用户插话)</td>
+    <td>客户端 VAD 检测到说话 → 消息带 <code>force_listen=true</code></td>
+    <td>模型下一步被强制 <code>&lt;|listen|&gt;</code>;正在说则先注入 <code>&lt;|turn_eos|&gt;</code> 收尾 + 重置 TTS</td>
+    <td><span class="ok">✅ 完全原生</span><br>不碰模型</td>
+  </tr>
+  <tr>
+    <td><b>AI → 人</b><br>(CUT 叫停)</td>
+    <td>Thinker 输出流里出现 <code>CUT{reason, redirect}</code></td>
+    <td><code>break_event.set()</code> 在 chunk 边界硬停 → 注入 <code>[CUT] redirect</code> 文本 → force_speak 念出来</td>
+    <td><span class="warn">⚠️ 需小改小模型</span><br>无原生 force_speak</td>
+  </tr>
+</table>
+
+<div class="note q">
+  <b>"立刻打断"能做多快?</b> 服务端 <code>_op_lock</code> 串行,所以打断不是逐 token 瞬时,而是落在<b>下一个 chunk 边界(几百 ms ~ 1s)</b>。<code>break_event</code> 能中途叫停当前生成。对人耳而言"几百毫秒内闭嘴/开口"已经是自然的打断体感。
+</div>
+
+<h3>CUT 的两条实现路线</h3>
+<table>
+  <tr><th></th><th>路线 1 · break + turn_based 插话 <span class="tag">推荐起步</span></th><th>路线 2 · 加 <code>duplex_force_speak(text)</code></th></tr>
+  <tr><td>做法</td>
+    <td>CUT → <code>break_event</code> 停 duplex → 瞬时用 turn_based 把 redirect 念出(turn_based 有现成"文本→TTS"通道)→ 切回 duplex</td>
+    <td>在 <code>DuplexCapability</code> 加方法,直接注入合成 TTS embedding(绕过 LLM)→ token2wav</td></tr>
+  <tr><td>改模型</td><td><span class="ok">几乎不改</span>,复用现成路径</td><td><span class="warn">要改模型代码</span>,风险更高</td></tr>
+  <tr><td>体验</td><td>切模式有小接缝</td><td>duplex 内插话更顺滑</td></tr>
+</table>
+
+<h3>关于 #3:用 System Prompt 让它"看到 CUT 就打断"</h3>
+<div class="note">
+  <b>诚实判断:能做"软触发",但不能当唯一硬保证。</b><br>
+  把 <code>[CUT] redirect</code> 当文本注入 Talker 输入,并用 system prompt 约定"看到 <code>[CUT]</code> 立即停止聆听、开口说后面的内容"——
+  这是<b>行为塑造</b>,但"被指令打断"很可能不在 duplex 模型训练分布里,<span class="warn">纯靠 prompt 不稳</span>。<br>
+  <b>稳的组合:</b> <code>break_event</code> 硬停(代码保证"闭嘴")+ 注入文本 + system prompt 引导"自然地说出 redirect"。硬停归代码,自然度归 prompt。<br>
+  <b>👉 demo 正在运行,这条可以直接实测</b>——写个小 WebSocket 客户端注入 <code>[CUT]</code> 看模型反应即可验证可靠性,再决定是否上路线 2。
+</div>
+
+<h2>4 · epoch 围栏:一套机制守住两个方向</h2>
+<p class="sub">Thinker 是在"几秒前的上下文"上推理的。无论它给的是<b>答案</b>还是 <b>CUT</b>,送达时世界可能已经变了(用户已自我纠正 / 已打断)。所以每条指令都带它<b>计算时的 epoch</b>,发出前校验。</p>
+<table>
+  <tr><th>事件</th><th>动作</th></tr>
+  <tr><td>用户打断 / 出现新的实质输入</td><td><code>state.epoch += 1</code> → <span class="ok">SGLang abort</span> 在飞的 Thinker 请求</td></tr>
+  <tr><td>Thinker 回 INJECT / CUT,但 <code>directive.epoch ≠ state.epoch</code></td><td><span class="bad">丢弃</span>,绝不发声 / 绝不打断</td></tr>
+</table>
+<p class="sub"><b>口诀:</b> abort 管"少算"(省 3B 的卡),epoch 管"不说 / 不乱打断"。两道闸,任意一道生效都安全。</p>
+
+<h2>5 · 两个关键流程</h2>
+<div class="grid cols-2">
+<div class="card">
+  <h3>A. 用户打断 AI(原生)</h3>
+  <ol class="flow">
+    <li>用户开口,客户端 VAD 命中</li>
+    <li>下条消息带 <code>force_listen=true</code></li>
+    <li>Talker flush 当前 TTS,转 <code>&lt;|listen|&gt;</code></li>
+    <li>编排层 <code>epoch++</code> → abort Thinker</li>
+    <li>以用户新输入重启;过期答案被 epoch 丢弃</li>
+  </ol>
+</div>
+<div class="card">
+  <h3>B. AI 主动叫停(CUT)</h3>
+  <ol class="flow">
+    <li>Thinker 监看,判定方向跑偏</li>
+    <li>输出 <code>CUT{redirect}</code>,带当前 epoch</li>
+    <li class="cut">编排层校验 epoch 仍有效 → <code>break_event</code> 硬停 Talker</li>
+    <li class="cut">注入 <code>[CUT] redirect</code> + force_speak</li>
+    <li>Talker 用同一音色立刻说出 redirect;用户顶回来则让位(人优先)</li>
+  </ol>
+</div>
+</div>
+
+<h2>6 · 关键代码钩子(MiniCPM-o demo)</h2>
+<table>
+  <tr><th>用途</th><th>文件:行</th></tr>
+  <tr><td>duplex 主循环 / streaming_generate</td><td><code>MiniCPMO45/modeling_minicpmo_unified.py:4959–5310</code></td></tr>
+  <tr><td>用户打断:force_listen 强制 <code>&lt;|listen|&gt;</code></td><td><code>…unified.py:4996, 5042–5043</code></td></tr>
+  <tr><td>正在说则注入 turn_eos 收尾</td><td><code>…unified.py:5060–5062, 5005–5012</code></td></tr>
+  <tr><td>break_event(中途叫停)</td><td><code>…unified.py:4273, 4380–4381</code></td></tr>
+  <tr><td>小模型草稿文本(给 Thinker 的桥)</td><td><code>…unified.py:5141–5147</code> / <code>result.text</code></td></tr>
+  <tr><td>turn_based 文本→TTS(路线1 复用)</td><td><code>…unified.py:1880–1888</code></td></tr>
+  <tr><td>force_speak 注入点(路线2)</td><td><code>…unified.py:5189</code>(替换 <code>tts_condition</code>)</td></tr>
+  <tr><td>WebSocket 串行 / op_lock(注入点)</td><td><code>py_backend/server.py:580–587, 279, 397</code></td></tr>
+  <tr><td>会话路由 / worker 生命周期</td><td><code>gateway_modules/worker_pool.py:52–207</code></td></tr>
+</table>
+
+<h2>7 · 落地路线 & 待定</h2>
+<div class="grid cols-2">
+<div class="card">
+  <h3>分步走</h3>
+  <ol class="flow">
+    <li>编排层骨架:订阅 Talker 草稿 + 打断事件,接 SGLang(35B-A3B)</li>
+    <li>级联跑通:草稿→Thinker→INJECT 念回(先不打断)</li>
+    <li>加 epoch 围栏 + SGLang abort(守过期)</li>
+    <li>CUT 路线1:break + turn_based 插话</li>
+    <li>实测 system-prompt 软触发,必要时上路线2</li>
+  </ol>
+</div>
+<div class="card">
+  <h3>仍待拍板 / 验证</h3>
+  <ul>
+    <li><b>system-prompt 软触发可靠性</b> — 需 demo 实测</li>
+    <li><b>人 vs AI 打断优先</b> — 默认人赢、CUT 让位</li>
+    <li><b>Thinker 取词</b> — 草稿桥接为主,是否加 Whisper 旁路拿用户原话?</li>
+    <li><b>Thinker 重跑频率</b> — 每轮 / 定时 / 事件触发(影响成本)</li>
+  </ul>
+</div>
+</div>
+
+<footer>
+  ITC · Talker–Thinker 架构快照 · 复刻 Thinking Machines Lab 的 Interaction Model<br>
+  Talker: MiniCPM-o 4.5(duplex) · Thinker: <a href="https://huggingface.co/Qwen/Qwen3.5-35B-A3B">Qwen/Qwen3.5-35B-A3B</a> on SGLang · 配套文档见 <code>docs/THINKER_TALKER.md</code>
+</footer>
+
+</div>
+</body>
+</html>
