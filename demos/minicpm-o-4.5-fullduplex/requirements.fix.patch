@@ -1,0 +1,19 @@
+--- requirements.txt.bak	2026-06-20 06:33:05.591274394 +0000
++++ requirements.txt	2026-06-20 06:33:27.848743279 +0000
+@@ -2,6 +2,7 @@
+ # pip install -r requirements.txt
+
+ # Core ML
++setuptools<81  # keep pkg_resources for librosa 0.9.0
+ transformers==4.51.0
+ accelerate==1.12.0
+ safetensors>=0.7.0
+@@ -25,7 +26,7 @@
+ # minicpmo-utils,故在此显式列出。librosa 必须 >=0.10.2 —— 0.9.x 在新 setuptools 下
+ # 因缺 pkg_resources 导入即崩(见历史故障:preset 加载失败 → sys-prompt 入口消失)。
+ PyYAML>=6.0
+-librosa>=0.10.2
++librosa==0.9.0  # 随 minicpmo-utils 硬依赖;原 >=0.10.2 与之冲突
+ soundfile>=0.12.1
+
+ # Data / Schema

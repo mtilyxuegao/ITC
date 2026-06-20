@@ -1,0 +1,8 @@
+# 绝不提交真实密钥 / 大文件 / 虚拟环境
+.env
+.venv/
+__pycache__/
+*.pyc
+models/
+certs/
+*.pem

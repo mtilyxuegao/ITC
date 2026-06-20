@@ -1,0 +1,4 @@
+# 用 uv 安装(见 README):uv pip install -r requirements.txt
+# 注意:livekit-agents 暂不支持 Python 3.14,请用 Python 3.12
+livekit-agents[openai]>=1.6.2
+python-dotenv>=1.0.0
