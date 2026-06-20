@@ -2,3 +2,14 @@
 # 注意:livekit-agents 暂不支持 Python 3.14,请用 Python 3.12
 livekit-agents[openai]>=1.6.2
 python-dotenv>=1.0.0
+
+# Thinker client (the large reasoning model is reached OpenAI-compatible over HTTP).
+openai>=1.40
+httpx>=0.27
+
+# Web search tool for the Thinker (DuckDuckGo, no API key).
+ddgs>=6.0
+
+# Thinker Activity dashboard (dashboard.py) + event emitter.
+fastapi>=0.116,<0.120
+uvicorn[standard]>=0.30
