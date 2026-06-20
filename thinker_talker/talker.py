@@ -188,6 +188,8 @@ class GatewayObserver:
                 yield TalkerEvent(kind=kind or "unknown", text=msg.get("text", "") or "",
                                   audio_b64=msg.get("audio"), response_id=msg.get("response_id"),
                                   end_of_turn=(kind == "listen"), raw=msg)
+            elif msg.get("type") == "user.audio":
+                yield TalkerEvent(kind="user_audio", audio_b64=msg.get("audio"), raw=msg)
             elif msg.get("type") == "session.closed":
                 yield TalkerEvent("closed", raw=msg)
                 break

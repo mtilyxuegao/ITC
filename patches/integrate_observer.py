@@ -44,6 +44,15 @@ A2_REP = '''                    if msg.get("type") in ("response.output.delta", 
                             pass
 ''' + A2
 
+A5 = '''                async for raw in ws.iter_text():
+                    await worker_ws.send(raw)'''
+A5_REP = A5 + '''
+                    try:  # tt-observer: 镜像用户上行音频给编排层做 ASR
+                        import minicpm_ext.observer_hub as _tt_obs
+                        _tt_obs.publish_user_audio(session_id, raw)
+                    except Exception:
+                        pass'''
+
 A3 = '''        if worker_ws:
             try:'''
 A3_REP = '''        try:  # tt-observer
@@ -102,7 +111,7 @@ def check(demo: str):
     src = open(gw, encoding="utf-8").read()
     if MARKER in src:
         return True, "已集成(幂等)"
-    for name, a in [("A1", A1), ("A2", A2), ("A3", A3), ("A4", A4)]:
+    for name, a in [("A1", A1), ("A2", A2), ("A3", A3), ("A4", A4), ("A5", A5)]:
         if a not in src:
             return False, f"锚点 {name} 未命中(gateway.py 可能已变更)"
     return True, "可应用"
@@ -126,6 +135,7 @@ def apply(demo: str) -> None:
     src = src.replace(A2, A2_REP, 1)
     src = src.replace(A3, A3_REP, 1)
     src = src.replace(A4, A4_REP, 1)
+    src = src.replace(A5, A5_REP, 1)
     open(gw, "w", encoding="utf-8").write(src)
     print("[gateway.py] 集成完成(4 处:register/publish/unregister/install)")
     print("\n✅ 完成。重建/重启 gateway 容器后,GET /observer/sessions、WS /observer/{id} 生效。")

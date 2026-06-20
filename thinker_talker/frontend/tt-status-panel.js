@@ -9,17 +9,26 @@
   if (!panel) return;
 
   panel.innerHTML = `
-    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;font:12px/1.5 system-ui,'PingFang SC',sans-serif">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font:12px/1.5 system-ui,'PingFang SC',sans-serif">
       <b style="color:#5b9dff">🧠 双脑状态</b>
-      <span>会话:<code id="ttSid">—</code></span>
       <span id="ttConn" style="color:#999">未连接</span>
+      <button id="ttToggle" style="margin-left:auto;border:1px solid #ccc;background:#f5f5f5;border-radius:6px;cursor:pointer;padding:1px 8px">收起</button>
+      <div style="flex-basis:100%;height:0"></div>
       <span>🗣️小模型:<b id="ttSmall">—</b></span>
       <span>🧠大模型:<b id="ttBig">—</b></span>
-      <span>上次动作:<b id="ttAct">—</b></span>
+      <span>动作:<b id="ttAct">—</b></span>
+      <span style="color:#999">会话:<code id="ttSid">—</code></span>
     </div>
     <div id="ttLog" style="margin-top:8px;max-height:170px;overflow:auto;font:12px/1.55 ui-monospace,Menlo,monospace;background:#0f1115;color:#d6def0;border-radius:8px;padding:8px"></div>`;
 
   const $ = (id) => document.getElementById(id);
+  $('ttToggle').onclick = () => {
+    const log = $('ttLog');
+    const hidden = log.style.display === 'none';
+    log.style.display = hidden ? 'block' : 'none';
+    $('ttToggle').textContent = hidden ? '收起' : '展开';
+    panel.style.width = hidden ? '340px' : '210px';
+  };
   const elLog = $('ttLog');
   const esc = (s) => (s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const COLOR = { small: '#5fe0d0', big: '#9cc3ff', search: '#ffb454', input: '#9aa4b2', reason: '#9aa4b2', fired: '#ff6b6b' };
@@ -51,6 +60,8 @@
         if (msg.searches && msg.searches.length) addRow('search', `🔎 联网搜索: ${msg.searches.map(esc).join('  /  ')}`);
         addRow('input', `↳ 实际传给大模型的输入: ${esc((msg.input || '').replace(/\n/g, ' | ').slice(-180))}`);
         if (msg.reason) addRow('reason', `   理由: ${esc(msg.reason)}`);
+      } else if (msg.stage === 'asr') {
+        addRow('search', `🎤 你说(ASR): ${esc(msg.text)}`);
       } else if (msg.stage === 'fired') {
         addRow('fired', `⚡ 已注入并让小模型说出(${esc(msg.action)}): "${esc(msg.text)}"`);
       }

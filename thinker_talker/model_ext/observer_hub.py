@@ -59,6 +59,23 @@ def list_sessions() -> list:
     return sorted(_injectors.keys())
 
 
+def publish_user_audio(session_id: str, raw: str) -> None:
+    """把客户端上行的用户音频(input.append)镜像给订阅者(编排层做 ASR)。"""
+    if not _subscribers.get(session_id):
+        return
+    import json
+    try:
+        msg = json.loads(raw)
+    except Exception:
+        return
+    if msg.get("type") != "input.append":
+        return
+    payload = msg.get("input") or msg.get("payload") or {}
+    audio = payload.get("audio_base64") or payload.get("audio")
+    if audio:
+        publish(session_id, json.dumps({"type": "user.audio", "audio": audio}))
+
+
 # ---- 订阅辅助(供 gateway 里直接定义的 /observer 路由调用)----
 def subscribe(session_id: str):
     import asyncio

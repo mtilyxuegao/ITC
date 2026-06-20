@@ -12,9 +12,11 @@ epoch 围栏同时守住"过期答案"和"过期 CUT"。
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import time
 
+from .asr import transcribe
 from .config import Config
 from .directives import Action, Directive
 from .state import Floor, FloorArbiter, SessionState, TalkerState
@@ -34,6 +36,9 @@ class Orchestrator:
         self._stop = asyncio.Event()
         self._tlog_path = cfg.transcript_log_path or ""
         self._last_thought_ctx = None  # 去重:上下文没变就不重复打扰大模型
+        self._audio_buf = bytearray()  # 用户上行音频(float32 16k),供 ASR
+        self._last_user_text = ""
+        self._asr_enabled = bool(cfg.openai_api_key)
 
     def _tlog(self, tag: str, text: str) -> None:
         """把一条对话/决策写进 conversation log(便于核对大模型是否真被调用)。"""
@@ -74,6 +79,14 @@ class Orchestrator:
                 if self.state.floor is Floor.TALKER:
                     self.arbiter.release()
                 self.state.talker_state = TalkerState.LISTENING
+            elif ev.kind == "user_audio" and ev.audio_b64:
+                try:
+                    self._audio_buf += base64.b64decode(ev.audio_b64)
+                except Exception:
+                    pass
+                maxb = 12 * 16000 * 4  # 只留最近 ~12s
+                if len(self._audio_buf) > maxb:
+                    del self._audio_buf[:-maxb]
             elif ev.kind == "closed":
                 break
         self._stop.set()
@@ -184,6 +197,26 @@ class Orchestrator:
             return False
         return True
 
+    async def asr_loop(self) -> None:
+        """周期性把最近的用户上行音频转写成文字,作为'用户'轮次喂给大模型。"""
+        if not self._asr_enabled:
+            logger.info("ASR 关闭(无 OpenAI key)")
+            return
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            while not self._stop.is_set():
+                await asyncio.sleep(2.5)
+                buf = bytes(self._audio_buf)
+                if len(buf) < 16000 * 4:  # < 1s
+                    continue
+                text = await transcribe(s, self.cfg.openai_api_key, buf,
+                                        base_url=self.cfg.openai_base_url)
+                if text and text != self._last_user_text and len(text) >= 2:
+                    self._last_user_text = text
+                    self.state.add_turn("user", text)
+                    self._tlog("用户(ASR)", text)
+                    await self._send_status(stage="asr", text=text)
+
     async def run(self) -> None:
         await self.talker.connect()
-        await asyncio.gather(self.consume_talker(), self.thinker_loop())
+        await asyncio.gather(self.consume_talker(), self.thinker_loop(), self.asr_loop())
