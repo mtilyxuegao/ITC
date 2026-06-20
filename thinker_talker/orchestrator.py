@@ -16,7 +16,6 @@ import logging
 
 from .config import Config
 from .directives import Action, Directive
-from .prompts import CUT_INJECT_PREFIX
 from .state import Floor, FloorArbiter, SessionState, TalkerState
 from .talker import TalkerClient
 from .thinker import SGLangThinker
@@ -109,7 +108,9 @@ class Orchestrator:
             if not self._cut_allowed(d):
                 return
             self.arbiter.take(Floor.THINKER)
-            await self.talker.force_speak(CUT_INJECT_PREFIX + d.text)
+            # 路线2(force_speak)直接让模型说 redirect;不加 [CUT] 前缀(那是已弃用的
+            # system-prompt 软触发方案,否则模型会把"[CUT]"当文本念出来)。
+            await self.talker.force_speak(d.text)
             self.state.add_turn("talker", d.text)
             self.arbiter.release()
             logger.info("CUT fired: %r (conf=%.2f)", d.text[:50], d.confidence)

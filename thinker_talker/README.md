@@ -51,10 +51,22 @@ python tests/test_state.py
 # 或 python -m pytest tests/
 ```
 
-## 集成边界(诚实说明)
+## 验证状态(2×H100 实测)
 
-- **已验证**:编排逻辑单测、指令解析、`patches/` 能干净应用且产物可编译。
-- **待真机联调**:① `force_speak` 的整句 TTS 与 duplex 状态连贯(见 `../patches/README.md`);
-  ② 编排层"旁路监听"同一会话——生产里浏览器才是媒体端,需给 gateway 加一个 observer 钩子
-  把草稿/打断事件转给编排层(`talker.py` 已是该 observer 的实现骨架,也可作独立测试驱动)。
-- **未做**:Whisper ASR 旁路(默认用小模型草稿桥接;`orchestrator.record_user_text()` 已留接口)。
+- ✅ **单测**:epoch 围栏 / floor 仲裁 / 指令解析(14 个)
+- ✅ **(a) force_speak**:`tests/smoke_force_speak.py` → 模型出声 ~3s 音频
+- ✅ **(b) 旁路监听 + 注入**:`tests/e2e_observer.py` → observer 注入 → 浏览器收到音频
+- ✅ **完整自动闭环**:`tests/e2e_autoloop.py`(host 上跑)→ Orchestrator 自动 tick →
+  真·Thinker(35B)判 `CUT conf=1.0` → 自动注入 → 浏览器**听到**纠正。全程无人工 force_speak。
+
+```bash
+# 自动闭环(需 gateway:8006 + thinker:30000 + 已应用两个 patch)
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python tests/e2e_autoloop.py     # -> AUTO-LOOP: OK
+```
+
+## 仍待处理(诚实说明)
+
+- **长对话连贯性**:force_speak 后 duplex 滑窗记账只验到"打断→出声→listen",多轮长跑未压测。
+- **Whisper ASR 旁路**:未做。默认用小模型草稿桥接;`orchestrator.record_user_text()` 已留接口。
+- **e2e_autoloop 的对话文字是种入的**(可靠合成"用户语音"超范围);决策→注入→出声整条链路是真的、自动的。
