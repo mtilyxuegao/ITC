@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thinker Control Plane — MiniCPM-o 4.5</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
+            background: #f5f5f0;
+            color: #2d2d2d;
+            min-height: 100vh;
+        }
+        .header {
+            background: #fff;
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e5e5e0;
+        }
+        .header-left { display: flex; align-items: center; gap: 16px; }
+        .header h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.3px; }
+        .nav-links { display: flex; gap: 8px; }
+        .nav-links a {
+            font-size: 13px; padding: 4px 12px; border-radius: 6px;
+            text-decoration: none; color: #666; transition: all 0.15s;
+        }
+        .nav-links a:hover { background: #f0f0eb; color: #2d2d2d; }
+        .nav-links a.active { background: #2d2d2d; color: #fff; }
+        main {
+            max-width: 1120px;
+            margin: 0 auto;
+            padding: 32px 24px 56px;
+        }
+        .kicker {
+            color: #777;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+        h2 {
+            font-size: 28px;
+            line-height: 1.15;
+            margin-bottom: 12px;
+            letter-spacing: -0.02em;
+        }
+        .lead {
+            max-width: 760px;
+            color: #555;
+            line-height: 1.65;
+            font-size: 14px;
+            margin-bottom: 26px;
+        }
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+            gap: 20px;
+            align-items: start;
+        }
+        @media (max-width: 900px) {
+            .layout { grid-template-columns: 1fr; }
+        }
+        .panel {
+            background: #fff;
+            border: 1px solid #e5e5e0;
+            border-radius: 14px;
+            padding: 20px;
+        }
+        .panel h3 { font-size: 15px; margin-bottom: 12px; }
+        label {
+            display: block;
+            color: #777;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        textarea, input {
+            width: 100%;
+            border: 1px solid #dddcd5;
+            background: #fbfbf8;
+            border-radius: 10px;
+            color: #2d2d2d;
+            font: inherit;
+            font-size: 13px;
+            padding: 11px 12px;
+            outline: none;
+        }
+        textarea {
+            min-height: 128px;
+            resize: vertical;
+            line-height: 1.55;
+        }
+        textarea:focus, input:focus { border-color: #777; background: #fff; }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 14px;
+        }
+        button {
+            appearance: none;
+            border: 1px solid #d6d4ca;
+            background: #fff;
+            color: #2d2d2d;
+            border-radius: 8px;
+            padding: 9px 13px;
+            font: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button:hover { border-color: #999; }
+        button.primary {
+            background: #2d2d2d;
+            color: #fff;
+            border-color: #2d2d2d;
+        }
+        button.danger {
+            background: #fff8f7;
+            border-color: #efc5bd;
+            color: #9a3412;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .stat {
+            border: 1px solid #eeeee8;
+            border-radius: 10px;
+            padding: 12px;
+            background: #fafaf7;
+        }
+        .stat .label {
+            color: #888;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        .stat .value {
+            font-family: 'SF Mono', Menlo, monospace;
+            font-size: 13px;
+            word-break: break-word;
+        }
+        .timeline {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 430px;
+            overflow: auto;
+        }
+        .event {
+            border-left: 3px solid #d6d4ca;
+            background: #fafaf7;
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .event.good { border-left-color: #2d7a2d; }
+        .event.warn { border-left-color: #b45309; }
+        .event.bad { border-left-color: #b42318; }
+        .event .time {
+            display: block;
+            color: #999;
+            font-size: 11px;
+            margin-bottom: 2px;
+        }
+        pre {
+            background: #191918;
+            color: #efefe9;
+            border-radius: 10px;
+            padding: 12px;
+            overflow: auto;
+            font-size: 12px;
+            line-height: 1.5;
+            min-height: 150px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <h1>MiniCPM-o 4.5</h1>
+            <div class="nav-links"></div>
+        </div>
+    </div>
+
+    <main>
+        <div class="kicker">Talker-Thinker</div>
+        <h2>Async Thinker Control Plane</h2>
+        <p class="lead">
+            This page is wired into the live gateway. MiniCPM-o remains the real-time Talker;
+            hard turns are escalated to an async Thinker, barge-in cancels the old task, and
+            epoch fencing prevents stale results from being written back.
+        </p>
+
+        <div class="layout">
+            <section class="panel">
+                <h3>Drive a Session</h3>
+                <label for="sessionId">Session ID</label>
+                <input id="sessionId" />
+
+                <div style="height:14px"></div>
+                <label for="prompt">User turn / Thinker query</label>
+                <textarea id="prompt">Help me design a voice-only thinker architecture for MiniCPM-o full-duplex speech.</textarea>
+
+                <div class="controls">
+                    <button class="primary" id="submitTurn">Submit hard turn</button>
+                    <button class="danger" id="bargeIn">Barge-in cancel</button>
+                    <button id="reescalate">Re-escalate with edited text</button>
+                    <button id="poll">Poll result</button>
+                    <button id="runDemo">Run interrupt demo</button>
+                </div>
+
+                <div style="height:20px"></div>
+                <h3>Event Timeline</h3>
+                <div class="timeline" id="timeline"></div>
+            </section>
+
+            <aside class="panel">
+                <h3>Gateway State</h3>
+                <div class="status-grid">
+                    <div class="stat"><div class="label">Backend</div><div class="value" id="backend">-</div></div>
+                    <div class="stat"><div class="label">Epoch</div><div class="value" id="epoch">-</div></div>
+                    <div class="stat"><div class="label">Talker State</div><div class="value" id="talkerState">-</div></div>
+                    <div class="stat"><div class="label">Task</div><div class="value" id="taskState">-</div></div>
+                </div>
+                <pre id="stateDump">{}</pre>
+            </aside>
+        </div>
+    </main>
+
+    <script type="module">
+        import { initNav } from '/static/shared/app-nav.js';
+
+        await initNav('thinker');
+
+        const sessionInput = document.getElementById('sessionId');
+        const promptInput = document.getElementById('prompt');
+        const timeline = document.getElementById('timeline');
+        const backend = document.getElementById('backend');
+        const epoch = document.getElementById('epoch');
+        const talkerState = document.getElementById('talkerState');
+        const taskState = document.getElementById('taskState');
+        const stateDump = document.getElementById('stateDump');
+
+        sessionInput.value = `thinker_${Date.now()}`;
+
+        function addEvent(text, kind = '') {
+            const item = document.createElement('div');
+            item.className = `event ${kind}`;
+            item.innerHTML = `<span class="time">${new Date().toLocaleTimeString()}</span>${text}`;
+            timeline.prepend(item);
+        }
+
+        async function request(path, options = {}) {
+            const resp = await fetch(path, {
+                headers: { 'Content-Type': 'application/json' },
+                ...options,
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.detail || data.message || resp.statusText);
+            }
+            renderState(data);
+            return data;
+        }
+
+        function renderState(data) {
+            const status = data.status || {};
+            const state = data.state || {};
+            const task = data.task || state.thinker_task || null;
+            backend.textContent = status.backend || '-';
+            epoch.textContent = state.epoch ?? '-';
+            talkerState.textContent = state.talker_state || '-';
+            taskState.textContent = task ? `${task.status} ${task.task_id}` : 'none';
+            stateDump.textContent = JSON.stringify(data, null, 2);
+        }
+
+        async function refresh() {
+            return request(`/api/thinker/sessions/${encodeURIComponent(sessionInput.value)}`);
+        }
+
+        async function poll(timeoutMs = 0) {
+            const data = await request(`/api/thinker/sessions/${encodeURIComponent(sessionInput.value)}/result?timeout_ms=${timeoutMs}`);
+            if (data.result) {
+                addEvent(`<strong>Thinker -> Talker:</strong> ${data.result.text}`, 'good');
+            } else {
+                addEvent('No Thinker result ready yet.', 'warn');
+            }
+            return data;
+        }
+
+        document.getElementById('submitTurn').addEventListener('click', async () => {
+            try {
+                const data = await request(`/api/thinker/sessions/${encodeURIComponent(sessionInput.value)}/turn`, {
+                    method: 'POST',
+                    body: JSON.stringify({ text: promptInput.value }),
+                });
+                addEvent(data.escalated ? `Escalated task <strong>${data.task.task_id}</strong>.` : 'Talker kept this turn local.', data.escalated ? 'good' : 'warn');
+            } catch (err) {
+                addEvent(err.message, 'bad');
+            }
+        });
+
+        document.getElementById('bargeIn').addEventListener('click', async () => {
+            try {
+                const data = await request(`/api/thinker/sessions/${encodeURIComponent(sessionInput.value)}/barge-in`, { method: 'POST', body: '{}' });
+                const note = data.cancelled_task_id
+                    ? `Barge-in cancelled <strong>${data.cancelled_task_id}</strong>.`
+                    : `Barge-in advanced epoch and invalidated stale write-back.`;
+                addEvent(note, 'warn');
+            } catch (err) {
+                addEvent(err.message, 'bad');
+            }
+        });
+
+        document.getElementById('reescalate').addEventListener('click', async () => {
+            try {
+                const data = await request(`/api/thinker/sessions/${encodeURIComponent(sessionInput.value)}/reescalate`, {
+                    method: 'POST',
+                    body: JSON.stringify({ query: promptInput.value }),
+                });
+                addEvent(`Re-escalated as <strong>${data.task.task_id}</strong>.`, 'good');
+            } catch (err) {
+                addEvent(err.message, 'bad');
+            }
+        });
+
+        document.getElementById('poll').addEventListener('click', async () => {
+            try { await poll(0); } catch (err) { addEvent(err.message, 'bad'); }
+        });
+
+        document.getElementById('runDemo').addEventListener('click', async () => {
+            try {
+                sessionInput.value = `thinker_${Date.now()}`;
+                promptInput.value = 'Help me design a voice-only thinker architecture for MiniCPM-o full-duplex speech.';
+                const first = await request(`/api/thinker/sessions/${encodeURIComponent(sessionInput.value)}/turn`, {
+                    method: 'POST',
+                    body: JSON.stringify({ text: promptInput.value }),
+                });
+                addEvent(`Demo escalated <strong>${first.task.task_id}</strong>.`, 'good');
+                await new Promise(resolve => setTimeout(resolve, 80));
+                const interrupted = await request(`/api/thinker/sessions/${encodeURIComponent(sessionInput.value)}/barge-in`, { method: 'POST', body: '{}' });
+                const interruptNote = interrupted.cancelled_task_id
+                    ? `Demo barge-in cancelled <strong>${interrupted.cancelled_task_id}</strong>.`
+                    : 'Demo barge-in invalidated the old epoch/result before write-back.';
+                addEvent(interruptNote, 'warn');
+                promptInput.value = 'Design a voice-only Talker-Thinker path using MiniCPM-o as Talker and an async text Thinker.';
+                const second = await request(`/api/thinker/sessions/${encodeURIComponent(sessionInput.value)}/reescalate`, {
+                    method: 'POST',
+                    body: JSON.stringify({ query: promptInput.value }),
+                });
+                addEvent(`Demo re-escalated <strong>${second.task.task_id}</strong>.`, 'good');
+                await poll(1200);
+            } catch (err) {
+                addEvent(err.message, 'bad');
+            }
+        });
+
+        await request('/api/thinker/status');
+        await refresh();
+    </script>
+</body>
+</html>

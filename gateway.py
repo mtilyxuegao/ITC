@@ -1,0 +1,1729 @@
+"""MiniCPMO45 推理 Gateway
+
+请求分发网关，不加载模型，负责：
+- 路由 Chat/Streaming/Duplex 请求到 Worker
+- 会话映射和 KV Cache LRU 命中路由
+- 统一 FIFO 请求排队（容量 1000，位置追踪 + ETA 估算）
+- Worker 健康检查
+
+启动方式：
+    cd /user/sunweiyue/lib/swy-dev/minicpmo45_service
+    PYTHONPATH=. .venv/base/bin/python gateway.py \\
+        --port 10024 \\
+        --workers localhost:22400,localhost:22401
+"""
+
+import os
+import re
+import json
+import asyncio
+import argparse
+import logging
+import time
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+from contextlib import asynccontextmanager
+from urllib.parse import urlencode
+
+import zipfile
+from io import BytesIO
+
+import httpx
+import numpy as np
+import uvicorn
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Body
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
+from gateway_modules.models import (
+    GatewayWorkerStatus,
+    ServiceStatus,
+    WorkersResponse,
+    QueueStatus,
+    EtaConfig,
+    EtaStatus,
+)
+from gateway_modules.worker_pool import WorkerPool, WorkerConnection
+from gateway_modules.ref_audio_registry import (
+    RefAudioRegistry,
+    RefAudioListResponse,
+    UploadRefAudioRequest,
+    RefAudioResponse,
+)
+from gateway_modules.app_registry import (
+    AppRegistry,
+    AppToggleRequest,
+    AppsPublicResponse,
+    AppsAdminResponse,
+)
+from gateway_modules.thinker_control import ThinkerGateway
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("gateway")
+
+
+
+_SESSION_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
+
+
+def _sanitize_session_id(session_id: str) -> str:
+    """校验 session_id 只含安全字符，防止 path traversal"""
+    if not _SESSION_ID_RE.match(session_id):
+        safe = re.sub(r'[^a-zA-Z0-9_\-]', '_', session_id)
+        return safe
+    return session_id
+
+
+def _openai_api_key() -> Optional[str]:
+    return os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_REALTIME_API_KEY")
+
+
+def _openai_realtime_model() -> str:
+    return os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime-2")
+
+
+def _openai_realtime_voice() -> str:
+    return os.environ.get("OPENAI_REALTIME_VOICE", "marin")
+
+
+def _openai_realtime_instructions() -> str:
+    return os.environ.get(
+        "OPENAI_REALTIME_INSTRUCTIONS",
+        (
+            "You are a concise, natural real-time voice assistant. "
+            "Answer in the user's language. Keep replies brief unless asked for detail."
+        ),
+    )
+
+
+def _client_ip_from_ws(ws: WebSocket) -> Optional[str]:
+    xff = ws.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return ws.headers.get("x-real-ip") or (ws.client.host if ws.client else None)
+
+
+def _identity_dict(
+    ws: WebSocket,
+    *,
+    session_id: str,
+    source_channel: str,
+    source_mode: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Collect all client/page/source identity meta from the incoming WS.
+
+    单一数据源:既用于透传给 worker(urlencode),也直接作为录制 meta。
+    前端新增任何 identity 字段,只要在这里收集一次,即同时流入两处。
+    """
+    client_id = (
+        ws.query_params.get("client_id")
+        or ws.headers.get("x-client-id")
+        or ws.cookies.get("client_id")
+    )
+    page_session_id = (
+        ws.query_params.get("page_session_id")
+        or ws.headers.get("x-page-session-id")
+        or ws.cookies.get("page_session_id")
+    )
+    return {
+        "session_id": session_id,
+        "gateway_session_id": session_id,
+        "client_id": client_id,
+        "page_session_id": page_session_id,
+        "client_ip": _client_ip_from_ws(ws),
+        "user_agent": ws.headers.get("user-agent"),
+        "origin": ws.headers.get("origin"),
+        "source_channel": source_channel,
+        "source_mode": source_mode,
+        "source_path": ws.url.path,
+        "page_route": ws.query_params.get("page_route"),
+        "client_surface": ws.query_params.get("client_surface"),
+    }
+
+
+def _worker_identity_query(
+    ws: WebSocket,
+    *,
+    session_id: str,
+    source_channel: str,
+    source_mode: Optional[str] = None,
+) -> str:
+    """Build query params passed to worker so recordings can be linked to clients/pages."""
+    params = _identity_dict(
+        ws, session_id=session_id, source_channel=source_channel, source_mode=source_mode
+    )
+    return urlencode({k: v for k, v in params.items() if v})
+
+
+# ============ 全局变量 ============
+
+worker_pool: Optional[WorkerPool] = None
+ref_audio_registry: Optional[RefAudioRegistry] = None
+thinker_gateway: Optional[ThinkerGateway] = None
+app_registry: AppRegistry = AppRegistry()
+
+# 配置（通过 main() 传入）
+GATEWAY_CONFIG: Dict[str, Any] = {}
+
+
+# ============ 应用初始化 ============
+
+_cleanup_task: Optional[asyncio.Task] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期"""
+    global worker_pool, ref_audio_registry, thinker_gateway, _cleanup_task
+
+    workers = GATEWAY_CONFIG.get("workers", ["localhost:10031"])
+    max_queue = GATEWAY_CONFIG.get("max_queue_size", 1000)
+    timeout = GATEWAY_CONFIG.get("timeout", 300.0)
+
+    # 从 config 读取 ETA 参数
+    eta_config_data = GATEWAY_CONFIG.get("eta_config")
+    eta_config = EtaConfig(**eta_config_data) if eta_config_data else EtaConfig()
+
+    worker_pool = WorkerPool(
+        worker_addresses=workers,
+        max_queue_size=max_queue,
+        request_timeout=timeout,
+        eta_config=eta_config,
+        ema_alpha=GATEWAY_CONFIG.get("eta_ema_alpha", 0.3),
+        ema_min_samples=GATEWAY_CONFIG.get("eta_ema_min_samples", 3),
+    )
+    await worker_pool.start()
+
+    # 初始化参考音频注册表
+    data_dir = os.path.join(os.path.dirname(__file__), "data", "assets", "ref_audio")
+    ref_audio_registry = RefAudioRegistry(storage_dir=data_dir)
+
+    # 初始化 Talker-Thinker 控制面。默认用本地 echo Thinker，设置 THINKER_MODEL 后
+    # 自动切到 OpenAI-compatible vLLM/SGLang 后端。
+    thinker_gateway = ThinkerGateway.from_env()
+
+    # 启动 session 清理后台任务（每天一次）
+    _cleanup_task = asyncio.create_task(_session_cleanup_loop())
+
+    logger.info(
+        "Gateway started, %s workers, %s ref audios, Thinker backend=%s, OpenAI Realtime configured=%s model=%s",
+        len(worker_pool.workers),
+        ref_audio_registry.count,
+        thinker_gateway.backend_name,
+        bool(_openai_api_key()),
+        _openai_realtime_model(),
+    )
+
+    yield
+
+    if _cleanup_task:
+        _cleanup_task.cancel()
+    if thinker_gateway:
+        await thinker_gateway.shutdown()
+    await worker_pool.stop()
+    logger.info("Gateway stopped")
+
+
+async def _session_cleanup_loop() -> None:
+    """每天执行一次 session 清理（retention_days 和 max_storage_gb 都为 -1 时不执行）"""
+    from session_cleanup import cleanup_sessions
+    from config import get_config
+
+    await asyncio.sleep(60)
+    while True:
+        try:
+            cfg = get_config()
+            days = cfg.recording.session_retention_days
+            gb = cfg.recording.max_storage_gb
+            if days < 0 and gb < 0:
+                logger.info("[Cleanup] Disabled (retention_days=-1, max_storage_gb=-1), sleeping")
+            else:
+                report = await asyncio.to_thread(
+                    cleanup_sessions, cfg.data_dir, days, gb,
+                )
+                logger.info(f"[Cleanup] {report}")
+        except Exception as e:
+            logger.error(f"[Cleanup] Failed: {e}", exc_info=True)
+        await asyncio.sleep(86400)
+
+
+app = FastAPI(
+    title="MiniCPMO45 Gateway",
+    description="MiniCPMO45 多模态推理网关",
+    version="1.0.0-alpha.2",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+)
+
+
+# ============ 健康检查 ============
+
+@app.get("/health")
+async def health():
+    """健康检查"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+# ============ 前端诊断日志 (用于排查录音故障) ============
+
+_DEBUG_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".run-logs")
+_DEBUG_LOG_PATH = os.path.join(_DEBUG_LOG_DIR, "mobile-record-trace.jsonl")
+_DEBUG_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB rolling cap
+
+
+def _append_debug_trace(payload: Dict[str, Any]) -> None:
+    """Append a single JSON line to the rolling debug log."""
+    try:
+        os.makedirs(_DEBUG_LOG_DIR, exist_ok=True)
+        # Roll over if oversized.
+        try:
+            if os.path.exists(_DEBUG_LOG_PATH) and os.path.getsize(_DEBUG_LOG_PATH) > _DEBUG_LOG_MAX_BYTES:
+                rolled = _DEBUG_LOG_PATH + ".1"
+                if os.path.exists(rolled):
+                    os.remove(rolled)
+                os.rename(_DEBUG_LOG_PATH, rolled)
+        except OSError:
+            pass
+        record = {
+            "ts": datetime.now().isoformat(timespec="milliseconds"),
+            **payload,
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("failed to write mobile record trace: %s", exc)
+
+
+@app.post("/api/_debug/record_trace")
+async def post_record_trace(payload: Dict[str, Any]):
+    """Receive a recording-session trace from the mobile frontend.
+
+    The frontend posts one record per press-to-talk attempt with the
+    full event timeline so we can diagnose failures (overlay shown but
+    no audio captured) without asking users to copy console logs.
+    """
+    _append_debug_trace(payload)
+    return {"ok": True}
+
+
+@app.get("/status", response_model=ServiceStatus)
+async def status():
+    """服务状态"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    return ServiceStatus(
+        gateway_healthy=True,
+        total_workers=len(worker_pool.workers),
+        idle_workers=worker_pool.idle_count,
+        busy_workers=worker_pool.busy_count,
+        duplex_workers=worker_pool.duplex_count,
+        loading_workers=worker_pool.loading_count,
+        error_workers=worker_pool.error_count,
+        offline_workers=worker_pool.offline_count,
+        queue_length=worker_pool.queue_length,
+        max_queue_size=worker_pool.max_queue_size,
+        running_tasks=worker_pool._get_running_tasks(),
+    )
+
+
+@app.get("/workers", response_model=WorkersResponse)
+async def list_workers():
+    """Worker 列表"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    return WorkersResponse(
+        total=len(worker_pool.workers),
+        workers=worker_pool.get_all_workers(),
+    )
+
+
+
+# ============ Chat WebSocket 代理 ============
+
+async def _api_worker_passthrough_ws(
+    ws: WebSocket,
+    *,
+    request_type: str,
+    worker_status: GatewayWorkerStatus,
+    worker_path: str,
+    session_id: str,
+    source_channel: str,
+    source_mode: Optional[str],
+    max_duration_s: Optional[float] = None,
+) -> None:
+    """Queue, assign a worker, then pass API-shaped events through unchanged."""
+
+    if worker_pool is None:
+        await ws.close(code=1013, reason="Service not ready")
+        return
+
+    session_id = _sanitize_session_id(session_id)
+    await ws.accept()
+
+    try:
+        ticket, future = worker_pool.enqueue(request_type, session_id=session_id)
+    except WorkerPool.QueueFullError:
+        await ws.send_json({
+            "type": "error",
+            "error": {"code": "queue_full", "message": "Queue full", "type": "server_error"},
+        })
+        await ws.close(code=1013, reason="Queue full")
+        return
+
+    worker: Optional[WorkerConnection] = None
+    if future.done():
+        worker = future.result()
+    else:
+        try:
+            await ws.send_json({
+                "type": "session.queued",
+                "position": ticket.position,
+                "estimated_wait_s": ticket.estimated_wait_s,
+                "ticket_id": ticket.ticket_id,
+                "queue_length": worker_pool.queue_length,
+            })
+            while not future.done():
+                try:
+                    worker = await asyncio.wait_for(asyncio.shield(future), timeout=3.0)
+                    break
+                except asyncio.TimeoutError:
+                    updated = worker_pool.get_ticket(ticket.ticket_id)
+                    if updated:
+                        await ws.send_json({
+                            "type": "session.queue_update",
+                            "position": updated.position,
+                            "estimated_wait_s": updated.estimated_wait_s,
+                            "queue_length": worker_pool.queue_length,
+                        })
+                except asyncio.CancelledError:
+                    worker_pool.cancel(ticket.ticket_id)
+                    return
+        except (WebSocketDisconnect, Exception) as exc:
+            logger.info("API WS disconnected during queue: session=%s (%s)", session_id, exc)
+            worker_pool.cancel(ticket.ticket_id)
+            return
+        if worker is None and future.done():
+            worker = future.result()
+
+    if worker is None:
+        await ws.send_json({
+            "type": "error",
+            "error": {"code": "worker_busy", "message": "No worker available", "type": "server_error"},
+        })
+        await ws.close(code=1013, reason="No worker available")
+        return
+
+    await ws.send_json({"type": "session.queue_done"})
+    worker.mark_busy(worker_status, request_type, session_id=session_id)
+    task_start = datetime.now()
+    worker_ws = None
+    recorder = None
+    session_closed = asyncio.Event()
+
+    try:
+        import websockets
+        from websockets.exceptions import ConnectionClosed
+        identity = _identity_dict(
+            ws,
+            session_id=session_id,
+            source_channel=source_channel,
+            source_mode=source_mode,
+        )
+        identity_qs = urlencode({k: v for k, v in identity.items() if v})
+
+        # ---- session 录制(旁路,fail-safe:任何异常都不影响转发主路径)----
+        recorder = None
+        try:
+            from config import get_config
+            _cfg = get_config()
+            if _cfg.recording.enabled:
+                from gateway_modules.session_recording import SessionRecorder
+                _mode = "turn_based" if request_type == "chat" else "full_duplex"
+                recorder = SessionRecorder(
+                    session_id, _mode,
+                    data_dir=os.path.join(_BASE_DIR, _cfg.data_dir),
+                    identity=identity,
+                    worker={"host": worker.host, "port": worker.port, "gpu_id": getattr(worker, "gpu_id", None)},
+                )
+        except Exception:
+            recorder = None
+
+        ws_url = f"ws://{worker.host}:{worker.port}{worker_path}?{identity_qs}"
+        worker_ws = await websockets.connect(ws_url, open_timeout=5, max_size=128 * 1024 * 1024)
+
+        async def client_to_worker() -> None:
+            try:
+                async for raw in ws.iter_text():
+                    await worker_ws.send(raw)
+                    if recorder is not None:
+                        try:
+                            recorder.record("up", json.loads(raw))
+                        except Exception:
+                            pass
+            except (WebSocketDisconnect, ConnectionClosed):
+                pass
+
+        async def worker_to_client() -> None:
+            try:
+                async for raw in worker_ws:
+                    await ws.send_text(raw)
+                    try:
+                        msg = json.loads(raw)
+                        if recorder is not None:
+                            recorder.record("down", msg)
+                        if msg.get("type") == "session.closed":
+                            session_closed.set()
+                            return
+                    except Exception:
+                        pass
+            except (WebSocketDisconnect, ConnectionClosed):
+                pass
+
+        tasks = [
+            asyncio.create_task(client_to_worker()),
+            asyncio.create_task(worker_to_client()),
+        ]
+
+        if max_duration_s is not None:
+            async def session_timeout_watchdog() -> None:
+                await asyncio.sleep(max_duration_s)
+                if session_closed.is_set():
+                    return
+                logger.info("API session timeout (%ss): session=%s", max_duration_s, session_id)
+                await ws.send_json({"type": "session.closed", "reason": "timeout"})
+                session_closed.set()
+
+            tasks.append(asyncio.create_task(session_timeout_watchdog()))
+
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        for task in done:
+            try:
+                task.result()
+            except (WebSocketDisconnect, ConnectionClosed):
+                pass
+
+    except Exception as exc:
+        logger.error("API worker passthrough failed: session=%s error=%s", session_id, exc, exc_info=True)
+        try:
+            await ws.send_json({
+                "type": "error",
+                "error": {"code": "session_failed", "message": str(exc), "type": "server_error"},
+            })
+        except Exception:
+            pass
+    finally:
+        if recorder is not None:
+            try:
+                recorder.close(reason="session_end" if session_closed.is_set() else "disconnected")
+            except Exception:
+                pass
+        if worker_ws:
+            try:
+                await worker_ws.close()
+            except Exception:
+                pass
+        duration = (datetime.now() - task_start).total_seconds()
+        worker_pool.release_worker(worker, request_type=request_type, duration_s=duration)
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+# ============ 默认 Ref Audio 分发 ============
+
+@app.get("/api/frontend_defaults")
+async def get_frontend_defaults():
+    """返回前端页面需要的默认配置
+
+    前端页面加载时调用此接口获取 playback_delay_ms 等可配置的默认值，
+    避免前端硬编码。返回值来自 config.json。
+    若 gateway 启动时指定了 --lang，此处也会包含 default_lang 字段。
+    """
+    from config import get_config
+    defaults = get_config().frontend_defaults()
+    server_lang = GATEWAY_CONFIG.get("default_lang")
+    if server_lang:
+        defaults["default_lang"] = server_lang
+    return defaults
+
+
+# ============ System Prompt 预设 ============
+
+_presets_cache: Optional[Dict[str, List[Dict[str, Any]]]] = None
+
+
+def _get_audio_meta(rel_path: str, project_root: str) -> Dict[str, Any]:
+    """获取音频文件的元数据（不加载 base64），用于预设列表"""
+    import librosa
+
+    if not rel_path:
+        return {"name": "", "duration": 0}
+
+    abs_path = rel_path if os.path.isabs(rel_path) else os.path.join(project_root, rel_path)
+    name = os.path.basename(abs_path)
+
+    if not os.path.exists(abs_path):
+        return {"name": name, "duration": 0}
+
+    try:
+        audio, sr = librosa.load(abs_path, sr=16000, mono=True)
+        return {"name": name, "duration": round(len(audio) / sr, 1)}
+    except Exception:
+        return {"name": name, "duration": 0}
+
+
+def _load_audio_base64(rel_path: str, project_root: str) -> Optional[Dict[str, Any]]:
+    """加载音频文件为 base64（按需调用）"""
+    import librosa
+
+    if not rel_path:
+        return None
+
+    abs_path = rel_path if os.path.isabs(rel_path) else os.path.join(project_root, rel_path)
+    if not os.path.exists(abs_path):
+        return None
+
+    try:
+        audio, sr = librosa.load(abs_path, sr=16000, mono=True)
+        audio_bytes = audio.astype(np.float32).tobytes()
+        import base64 as b64mod
+        return {
+            "data": b64mod.b64encode(audio_bytes).decode("ascii"),
+            "name": os.path.basename(abs_path),
+            "duration": round(len(audio) / sr, 1),
+        }
+    except Exception as e:
+        logger.error(f"Failed to load audio {abs_path}: {e}")
+        return None
+
+
+def _load_presets_from_dir(project_root: str) -> Dict[str, List[Dict[str, Any]]]:
+    """扫描 assets/presets/<mode>/*.yaml，返回元数据（不含音频 base64）"""
+    import yaml
+
+    presets_root = os.path.join(project_root, "assets", "presets")
+    result: Dict[str, List[Dict[str, Any]]] = {}
+
+    if not os.path.isdir(presets_root):
+        return result
+
+    for mode_dir in sorted(os.listdir(presets_root)):
+        mode_path = os.path.join(presets_root, mode_dir)
+        if not os.path.isdir(mode_path):
+            continue
+
+        mode_presets = []
+        for fname in sorted(os.listdir(mode_path)):
+            if not fname.endswith((".yaml", ".yml")):
+                continue
+            fpath = os.path.join(mode_path, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    preset = yaml.safe_load(f)
+                if not preset or not isinstance(preset, dict):
+                    continue
+
+                if "system_content" in preset:
+                    resolved = []
+                    for item in preset["system_content"]:
+                        if item.get("type") == "audio" and item.get("path"):
+                            meta = _get_audio_meta(item["path"], project_root)
+                            resolved.append({
+                                "type": "audio",
+                                "data": None,
+                                "path": item["path"],
+                                "name": meta["name"],
+                                "duration": meta["duration"],
+                            })
+                        else:
+                            resolved.append(item)
+                    preset["system_content"] = resolved
+
+                if "ref_audio_path" in preset:
+                    meta = _get_audio_meta(preset["ref_audio_path"], project_root)
+                    preset["ref_audio"] = {
+                        "data": None,
+                        "path": preset["ref_audio_path"],
+                        "name": meta["name"],
+                        "duration": meta["duration"],
+                    }
+                    del preset["ref_audio_path"]
+
+                mode_presets.append(preset)
+            except Exception as e:
+                logger.error(f"Failed to load preset {fpath}: {e}")
+
+        if mode_presets:
+            mode_presets.sort(key=lambda p: p.get("order", 999))
+            result[mode_dir] = mode_presets
+
+    total = sum(len(v) for v in result.values())
+    logger.info(f"Loaded {total} presets (metadata only) across {len(result)} modes")
+    return result
+
+
+@app.get("/api/presets")
+async def get_presets():
+    """返回预设元数据（不含音频 base64，音频通过 /api/presets/{mode}/{id}/audio 按需加载）"""
+    global _presets_cache
+
+    if _presets_cache is not None:
+        return _presets_cache
+
+    project_root = os.path.dirname(__file__)
+    _presets_cache = _load_presets_from_dir(project_root)
+    return _presets_cache
+
+
+@app.get("/api/presets/{mode}/{preset_id}/audio")
+async def get_preset_audio(mode: str, preset_id: str):
+    """按需加载单个 preset 的音频数据"""
+    global _presets_cache
+    if _presets_cache is None:
+        project_root = os.path.dirname(__file__)
+        _presets_cache = _load_presets_from_dir(project_root)
+
+    mode_presets = _presets_cache.get(mode, [])
+    preset = next((p for p in mode_presets if p.get("id") == preset_id), None)
+    if not preset:
+        raise HTTPException(status_code=404, detail=f"Preset not found: {mode}/{preset_id}")
+
+    project_root = os.path.dirname(__file__)
+    result: Dict[str, Any] = {}
+
+    if "system_content" in preset:
+        audio_items = []
+        for item in preset["system_content"]:
+            if item.get("type") == "audio" and item.get("path"):
+                loaded = _load_audio_base64(item["path"], project_root)
+                audio_items.append(loaded or {"data": None, "name": item.get("name", ""), "duration": 0})
+        result["system_content_audio"] = audio_items
+
+    if preset.get("ref_audio") and preset["ref_audio"].get("path"):
+        loaded = _load_audio_base64(preset["ref_audio"]["path"], project_root)
+        result["ref_audio"] = loaded or {"data": None, "name": preset["ref_audio"].get("name", ""), "duration": 0}
+
+    return result
+
+
+# 缓存：启动后首次请求时加载，之后直接返回
+_default_ref_audio_cache: Optional[Dict[str, Any]] = None
+
+
+@app.get("/api/default_ref_audio")
+async def get_default_ref_audio():
+    """返回默认参考音频（PCM float32 16kHz mono base64）
+
+    前端页面加载时调用此接口获取默认 ref audio，
+    之后所有请求统一通过 ref_audio_base64 传递音频数据。
+    """
+    global _default_ref_audio_cache
+
+    if _default_ref_audio_cache is not None:
+        return _default_ref_audio_cache
+
+    from config import get_config
+    cfg = get_config()
+
+    if not cfg.ref_audio_path:
+        raise HTTPException(status_code=404, detail="No default ref audio configured")
+
+    # 解析路径（支持相对路径，相对于 minicpmo45_service/）
+    ref_path = cfg.ref_audio_path
+    if not os.path.isabs(ref_path):
+        ref_path = os.path.join(os.path.dirname(__file__), ref_path)
+
+    if not os.path.exists(ref_path):
+        raise HTTPException(status_code=404, detail=f"Default ref audio not found: {cfg.ref_audio_path}")
+
+    try:
+        import base64
+        import librosa
+        import numpy as np
+
+        # 加载并重采样为 16kHz mono float32（与前端上传格式一致）
+        audio, sr = librosa.load(ref_path, sr=16000, mono=True)
+        duration = len(audio) / 16000
+
+        # 转换为 base64（PCM float32）
+        audio_bytes = audio.astype(np.float32).tobytes()
+        audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+
+        _default_ref_audio_cache = {
+            "name": os.path.basename(cfg.ref_audio_path),
+            "duration": round(duration, 1),
+            "sample_rate": 16000,
+            "samples": len(audio),
+            "base64": audio_b64,
+        }
+        logger.info(
+            f"Default ref audio loaded: {_default_ref_audio_cache['name']} "
+            f"({duration:.1f}s, {len(audio)} samples)"
+        )
+        return _default_ref_audio_cache
+
+    except Exception as e:
+        logger.error(f"Failed to load default ref audio: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to load ref audio: {e}")
+
+
+# ============ 素材管理 API ============
+
+@app.get("/api/assets/ref_audio", response_model=RefAudioListResponse)
+async def list_ref_audios():
+    """列出参考音频"""
+    if ref_audio_registry is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    return RefAudioListResponse(
+        total=ref_audio_registry.count,
+        ref_audios=ref_audio_registry.list_all(),
+    )
+
+
+@app.post("/api/assets/ref_audio", response_model=RefAudioResponse)
+async def upload_ref_audio(request: UploadRefAudioRequest):
+    """上传参考音频"""
+    if ref_audio_registry is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    try:
+        info = ref_audio_registry.upload(
+            name=request.name,
+            audio_base64=request.audio_base64,
+        )
+        return RefAudioResponse(
+            success=True,
+            id=info.id,
+            name=info.name,
+            message=f"Uploaded successfully, duration={info.duration_ms}ms",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Upload ref audio failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/assets/ref_audio/{ref_id}", response_model=RefAudioResponse)
+async def delete_ref_audio(ref_id: str):
+    """删除参考音频"""
+    if ref_audio_registry is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    if not ref_audio_registry.exists(ref_id):
+        raise HTTPException(status_code=404, detail=f"Ref audio not found: {ref_id}")
+
+    success = ref_audio_registry.delete(ref_id)
+    return RefAudioResponse(
+        success=success,
+        id=ref_id,
+        message="Deleted" if success else "Failed to delete",
+    )
+
+
+# ============ 队列状态 API ============
+
+@app.get("/api/queue", response_model=QueueStatus)
+async def get_queue():
+    """获取当前队列状态"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    return worker_pool.get_queue_status()
+
+
+@app.get("/api/queue/{ticket_id}")
+async def get_queue_ticket(ticket_id: str):
+    """获取指定排队项的状态（前端轮询用）"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    ticket = worker_pool.get_ticket(ticket_id)
+    if ticket is None:
+        return {"found": False, "message": "Ticket not in queue (may have been assigned or cancelled)"}
+    return {"found": True, "ticket": ticket.model_dump()}
+
+
+@app.delete("/api/queue/{ticket_id}")
+async def cancel_queue_item(ticket_id: str):
+    """取消排队项（Admin 用）"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    ok = worker_pool.cancel(ticket_id)
+    return {"success": ok}
+
+
+# ============ ETA 配置 API ============
+
+@app.get("/api/config/eta", response_model=EtaStatus)
+async def get_eta_config():
+    """获取 ETA 配置和 EMA 状态"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    return worker_pool.eta_tracker.get_status()
+
+
+@app.put("/api/config/eta", response_model=EtaStatus)
+async def update_eta_config(new_config: EtaConfig):
+    """更新 ETA 基准配置（运行时生效，无需重启）"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    worker_pool.eta_tracker.update_config(new_config)
+    alpha_str = f", ema_alpha={new_config.ema_alpha}" if new_config.ema_alpha is not None else ""
+    logger.info(
+        f"ETA config updated: chat={new_config.eta_chat_s}s, "
+        f"half_duplex={new_config.eta_half_duplex_s}s, "
+        f"audio_duplex={new_config.eta_audio_duplex_s}s, "
+        f"omni_duplex={new_config.eta_omni_duplex_s}s{alpha_str}"
+    )
+    return worker_pool.eta_tracker.get_status()
+
+
+# ============ 缓存状态 API ============
+
+@app.get("/cache")
+async def list_cache():
+    """查看各 Worker 的 KV cache 状态"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    return {
+        "workers": [
+            {
+                "worker_id": w.worker_id,
+                "status": w.status.value,
+            }
+            for w in worker_pool.workers.values()
+        ],
+    }
+
+
+# ============ Session API ============
+
+_BASE_DIR = os.path.dirname(__file__)
+
+
+def _list_active_sessions_payload() -> Dict[str, Any]:
+    """Gateway 当前占用 Worker 的会话列表（Admin / 测试共用）。"""
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    sessions: List[Dict[str, Any]] = []
+    for w in worker_pool.workers.values():
+        if not w.current_session_id:
+            continue
+        last_active = w.last_heartbeat or w.task_started_at or datetime.now()
+        sessions.append(
+            {
+                "session_id": w.current_session_id,
+                "worker_id": w.worker_id,
+                "messages_hash": w.cached_hash or "",
+                "last_active": last_active.isoformat()
+                if hasattr(last_active, "isoformat")
+                else str(last_active),
+            }
+        )
+    return {"total": len(sessions), "sessions": sessions}
+
+
+@app.get("/sessions")
+async def list_active_sessions():
+    """列出活跃会话（与 admin.html `GET /sessions` 一致）。"""
+    return _list_active_sessions_payload()
+
+
+@app.get("/api/sessions")
+async def list_active_sessions_api():
+    """同 list_active_sessions，REST 风格路径便于与 `/api/sessions/{id}` 并列。"""
+    return _list_active_sessions_payload()
+
+
+def _session_dir(session_id: str) -> str:
+    """获取 session 目录的绝对路径（含路径安全校验）"""
+    safe_id = _sanitize_session_id(session_id)
+    from config import get_config
+    cfg = get_config()
+    base = os.path.join(_BASE_DIR, cfg.data_dir, "sessions", safe_id)
+    resolved = os.path.realpath(base)
+    sessions_root = os.path.realpath(os.path.join(_BASE_DIR, cfg.data_dir, "sessions"))
+    if not resolved.startswith(sessions_root):
+        raise HTTPException(status_code=400, detail="Invalid session_id")
+    return resolved
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session_meta(session_id: str):
+    """获取 session 元数据 (meta.json)"""
+    sdir = _session_dir(session_id)
+    meta_path = os.path.join(sdir, "meta.json")
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    with open(meta_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.get("/api/sessions/{session_id}/recording")
+async def get_session_recording(session_id: str):
+    """获取录制事件流 (stream.jsonl + meta.json)。
+
+    返回忠实事件流:{meta, events:[{seq, ts, dir, frame}, ...]}。
+    frame 为协议帧原样;音视频二进制以 "@blob/NNN.ext" 指针引用,前端去掉 '@'
+    后经 /assets/blob/NNN.ext 取实际文件。
+    """
+    sdir = _session_dir(session_id)
+    stream_path = os.path.join(sdir, "stream.jsonl")
+    meta_path = os.path.join(sdir, "meta.json")
+    if not os.path.exists(stream_path):
+        raise HTTPException(status_code=404, detail=f"Recording not found for session: {session_id}")
+
+    events = []
+    with open(stream_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except Exception:
+                continue
+
+    meta = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
+
+    return {"session_id": session_id, "meta": meta, "events": events}
+
+
+_MIME_MAP = {
+    ".wav": "audio/wav",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webm": "video/webm",
+    ".mp4": "video/mp4",
+    ".mp3": "audio/mpeg",
+}
+
+
+@app.api_route("/api/sessions/{session_id}/assets/{asset_path:path}", methods=["GET", "HEAD"])
+async def get_session_asset(session_id: str, asset_path: str):
+    """获取 session 资源文件（音频 WAV / 图片）
+
+    音频已在录制时存为 16-bit PCM WAV，直接 serve（支持 Range 请求）。
+    """
+    sdir = _session_dir(session_id)
+
+    if ".." in asset_path or asset_path.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid asset path")
+
+    full_path = os.path.realpath(os.path.join(sdir, asset_path))
+    if not full_path.startswith(os.path.realpath(sdir)):
+        raise HTTPException(status_code=400, detail="Path traversal detected")
+
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail=f"Asset not found: {asset_path}")
+
+    ext = os.path.splitext(full_path)[1].lower()
+    mime = _MIME_MAP.get(ext)
+    if mime:
+        return FileResponse(full_path, media_type=mime)
+    return FileResponse(full_path)
+
+
+@app.get("/api/sessions/{session_id}/download")
+async def download_session(session_id: str):
+    """打包下载整个 session (zip)"""
+    sdir = _session_dir(session_id)
+    if not os.path.isdir(sdir):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    def _build_zip() -> BytesIO:
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, _dirs, files in os.walk(sdir):
+                for fname in files:
+                    abs_path = os.path.join(root, fname)
+                    arc_name = os.path.join(session_id, os.path.relpath(abs_path, sdir))
+                    zf.write(abs_path, arc_name)
+        buf.seek(0)
+        return buf
+
+    zip_buf = await asyncio.to_thread(_build_zip)
+    return StreamingResponse(
+        zip_buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={session_id}.zip"},
+    )
+
+
+_UPLOAD_MAX_BYTES = 200 * 1024 * 1024  # 200 MB
+_ALLOWED_UPLOAD_TYPES = {"video/webm", "video/mp4", "audio/wav", "audio/webm"}
+_EXT_FROM_MIME = {"video/webm": ".webm", "video/mp4": ".mp4", "audio/wav": ".wav", "audio/webm": ".webm"}
+
+
+@app.post("/api/sessions/{session_id}/upload-recording")
+async def upload_session_recording(session_id: str, file: UploadFile = File(...)):
+    """上传前端录制文件（视频/音频）到 session 目录
+
+    存储为 data/sessions/{session_id}/frontend_replay.{ext}
+    """
+    sdir = _session_dir(session_id)
+    os.makedirs(sdir, exist_ok=True)
+
+    content_type = (file.content_type or "").split(";")[0].strip()
+    if content_type not in _ALLOWED_UPLOAD_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
+
+    ext = _EXT_FROM_MIME.get(content_type, ".bin")
+    dest = os.path.join(sdir, f"frontend_replay{ext}")
+
+    total = 0
+    with open(dest, "wb") as f:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _UPLOAD_MAX_BYTES:
+                f.close()
+                os.remove(dest)
+                raise HTTPException(status_code=413, detail="File too large (max 200MB)")
+            f.write(chunk)
+
+    logger.info(f"[Session] uploaded frontend recording: {dest} ({total / 1024 / 1024:.1f} MB)")
+    return {"status": "ok", "path": f"frontend_replay{ext}", "size_bytes": total}
+
+
+_COMMENT_MAX_CHARS = 2000
+
+
+@app.post("/api/sessions/{session_id}/comment")
+async def save_session_comment(session_id: str, payload: Dict[str, Any] = Body(...)):
+    """保存用户对该 session 的评语，写入 data/sessions/{session_id}/comment.txt"""
+    sdir = _session_dir(session_id)
+    os.makedirs(sdir, exist_ok=True)
+
+    raw = payload.get("comment")
+    if raw is None:
+        raw = ""
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="comment must be a string")
+    comment = raw.strip()
+    if len(comment) > _COMMENT_MAX_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Comment too long (max {_COMMENT_MAX_CHARS} chars)",
+        )
+
+    dest = os.path.join(sdir, "comment.txt")
+    if comment:
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(comment)
+    else:
+        # Empty comment ⇒ remove any prior comment file so it doesn't linger.
+        try:
+            os.remove(dest)
+        except FileNotFoundError:
+            pass
+
+    logger.info(f"[Session] comment saved: {session_id} ({len(comment)} chars)")
+    return {"status": "ok", "len": len(comment)}
+
+
+@app.get("/api/sessions/{session_id}/comment")
+async def get_session_comment(session_id: str):
+    """读取 session 的评语；不存在则返回空字符串。"""
+    sdir = _session_dir(session_id)
+    if not os.path.isdir(sdir):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    dest = os.path.join(sdir, "comment.txt")
+    if not os.path.exists(dest):
+        return {"comment": ""}
+    try:
+        with open(dest, "r", encoding="utf-8") as f:
+            return {"comment": f.read()}
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/s/{session_id}", response_class=HTMLResponse)
+async def session_viewer(session_id: str):
+    """Session 回看页面"""
+    sdir = _session_dir(session_id)
+    meta_path = os.path.join(sdir, "meta.json")
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    viewer_path = os.path.join(os.path.dirname(__file__), "static", "session-viewer.html")
+    if os.path.exists(viewer_path):
+        return FileResponse(viewer_path)
+    return HTMLResponse(f"<h1>Session {session_id}</h1><p>Viewer page not found</p>")
+
+
+# ============ APP 管理 ============
+
+@app.get("/api/apps", response_model=AppsPublicResponse)
+async def get_enabled_apps():
+    """返回当前启用的 APP 列表（前端导航栏和主页卡片使用）"""
+    return AppsPublicResponse(apps=app_registry.get_enabled_apps())
+
+
+# ============ Talker-Thinker 控制面 ============
+
+def _require_thinker_gateway() -> ThinkerGateway:
+    if thinker_gateway is None:
+        raise HTTPException(status_code=503, detail="Thinker gateway is not ready")
+    return thinker_gateway
+
+
+@app.get("/api/thinker/status")
+async def thinker_status():
+    gateway = _require_thinker_gateway()
+    return {"status": gateway.status()}
+
+
+@app.get("/api/thinker/sessions/{session_id}")
+async def get_thinker_session(session_id: str):
+    gateway = _require_thinker_gateway()
+    safe_id = _sanitize_session_id(session_id)
+    state = await gateway.get_session(safe_id)
+    return {
+        "status": gateway.status(),
+        "state": gateway.serialize_state(state),
+    }
+
+
+@app.post("/api/thinker/sessions/{session_id}/turn")
+async def thinker_turn(session_id: str, payload: Dict[str, Any] = Body(...)):
+    gateway = _require_thinker_gateway()
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    safe_id = _sanitize_session_id(session_id)
+    try:
+        escalated, task = await gateway.maybe_escalate(safe_id, text)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    state = await gateway.get_session(safe_id)
+    return {
+        "status": gateway.status(),
+        "escalated": escalated,
+        "task": gateway.serialize_task(task),
+        "state": gateway.serialize_state(state),
+    }
+
+
+@app.post("/api/thinker/sessions/{session_id}/submit")
+async def thinker_submit(session_id: str, payload: Dict[str, Any] = Body(...)):
+    gateway = _require_thinker_gateway()
+    query = str(payload.get("query", "")).strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query is required")
+
+    safe_id = _sanitize_session_id(session_id)
+    try:
+        task = await gateway.submit(safe_id, query)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    state = await gateway.get_session(safe_id)
+    return {
+        "status": gateway.status(),
+        "task": gateway.serialize_task(task),
+        "state": gateway.serialize_state(state),
+    }
+
+
+@app.post("/api/thinker/sessions/{session_id}/barge-in")
+async def thinker_barge_in(session_id: str):
+    gateway = _require_thinker_gateway()
+    safe_id = _sanitize_session_id(session_id)
+    cancelled_task_id = await gateway.barge_in(safe_id)
+    state = await gateway.get_session(safe_id)
+    return {
+        "status": gateway.status(),
+        "cancelled_task_id": cancelled_task_id,
+        "state": gateway.serialize_state(state),
+    }
+
+
+@app.post("/api/thinker/sessions/{session_id}/reescalate")
+async def thinker_reescalate(session_id: str, payload: Dict[str, Any] = Body(...)):
+    gateway = _require_thinker_gateway()
+    query = str(payload.get("query", "")).strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query is required")
+
+    safe_id = _sanitize_session_id(session_id)
+    task = await gateway.reescalate(safe_id, query)
+    state = await gateway.get_session(safe_id)
+    return {
+        "status": gateway.status(),
+        "task": gateway.serialize_task(task),
+        "state": gateway.serialize_state(state),
+    }
+
+
+@app.get("/api/thinker/sessions/{session_id}/result")
+async def thinker_result(session_id: str, timeout_ms: int = 0, task_id: Optional[str] = None):
+    gateway = _require_thinker_gateway()
+    safe_id = _sanitize_session_id(session_id)
+    result = await gateway.wait_for_result(
+        safe_id,
+        timeout_seconds=max(0, timeout_ms) / 1000.0,
+        task_id=task_id,
+    )
+    state = await gateway.get_session(safe_id)
+    return {
+        "status": gateway.status(),
+        "result": gateway.serialize_result(result),
+        "state": gateway.serialize_state(state),
+    }
+
+
+# ============ OpenAI Realtime-only voice page backend ============
+
+@app.get("/api/openai-realtime/status")
+async def openai_realtime_status():
+    return {
+        "status": {
+            "backend": "openai-realtime",
+            "configured": bool(_openai_api_key()),
+            "model": _openai_realtime_model(),
+            "voice": _openai_realtime_voice(),
+            "api_url": "https://api.openai.com/v1/realtime/calls",
+        }
+    }
+
+
+@app.post("/api/openai-realtime/call")
+async def openai_realtime_call(payload: Dict[str, Any] = Body(...), request: Request = None):
+    api_key = _openai_api_key()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEY or OPENAI_REALTIME_API_KEY is not set",
+        )
+
+    sdp = str(payload.get("sdp", "")).strip()
+    if not sdp:
+        raise HTTPException(status_code=400, detail="sdp is required")
+
+    instructions = str(payload.get("instructions") or _openai_realtime_instructions()).strip()
+    voice = str(payload.get("voice") or _openai_realtime_voice()).strip()
+    model = str(payload.get("model") or _openai_realtime_model()).strip()
+
+    session_config = {
+        "type": "realtime",
+        "model": model,
+        "instructions": instructions,
+        "audio": {
+            "output": {
+                "voice": voice,
+            },
+        },
+    }
+    safety_id = None
+    if request is not None:
+        safety_id = request.headers.get("x-client-id") or request.headers.get("x-page-session-id")
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    if safety_id:
+        headers["OpenAI-Safety-Identifier"] = safety_id[:128]
+
+    files = {
+        "sdp": (None, sdp, "application/sdp"),
+        "session": (None, json.dumps(session_config), "application/json"),
+    }
+
+    async with httpx.AsyncClient(timeout=float(os.environ.get("OPENAI_REALTIME_TIMEOUT_SECONDS", "45"))) as client:
+        response = await client.post(
+            "https://api.openai.com/v1/realtime/calls",
+            headers=headers,
+            files=files,
+        )
+
+    if response.status_code >= 400:
+        detail = response.text
+        try:
+            detail_json = response.json()
+            detail = detail_json.get("error", {}).get("message") or detail_json
+        except Exception:
+            pass
+        raise HTTPException(status_code=response.status_code, detail=detail)
+
+    return Response(content=response.text, media_type="application/sdp")
+
+
+@app.get("/api/admin/apps", response_model=AppsAdminResponse)
+async def get_all_apps():
+    """返回所有 APP 列表（含 enabled 状态，Admin 页面使用）"""
+    return AppsAdminResponse(apps=app_registry.get_all_apps())
+
+
+@app.put("/api/admin/apps/{app_id}")
+async def toggle_app(app_id: str, req: AppToggleRequest):
+    """切换 APP 启用/禁用状态（Admin 操作，运行时生效）"""
+    result = app_registry.set_enabled(app_id, req.enabled)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Unknown app: {app_id}")
+    action = "enabled" if req.enabled else "disabled"
+    logger.info(f"[AppRegistry] App '{app_id}' {action}")
+    return {"success": True, "app": result}
+
+
+# ============ 静态文件 ============
+
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    """首页：模式选择（Turn-based / Omni Duplex / Audio Duplex）"""
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return HTMLResponse(
+        "<h1>MiniCPMO45 Service</h1>"
+        "<p>API docs: <a href='/docs'>/docs</a></p>"
+    )
+
+
+@app.get("/turnbased", response_class=HTMLResponse)
+async def turnbased():
+    """Turn-based Chat Demo 页面"""
+    if not app_registry.is_enabled("turnbased"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "turnbased.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Turn-based Chat</h1><p>Page not found</p>")
+
+
+@app.get("/omni", response_class=HTMLResponse)
+async def omni():
+    """Omni Duplex Demo 页面"""
+    if not app_registry.is_enabled("omni"):
+        return RedirectResponse(url="/", status_code=302)
+    omni_path = os.path.join(static_dir, "omni", "omni.html")
+    if os.path.exists(omni_path):
+        return FileResponse(omni_path)
+    return HTMLResponse("<h1>Omni</h1><p>Omni page not found</p>")
+
+
+@app.get("/half_duplex", response_class=HTMLResponse)
+async def half_duplex():
+    """Half-Duplex Audio Demo 页面"""
+    if not app_registry.is_enabled("half_duplex_audio"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "half-duplex", "half_duplex.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Half-Duplex Audio</h1><p>Page not found</p>")
+
+
+@app.get("/audio_duplex", response_class=HTMLResponse)
+async def audio_duplex():
+    """语音双工 Demo 页面（简化版 Omni，无视频）"""
+    if not app_registry.is_enabled("audio_duplex"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "audio-duplex", "audio_duplex.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Audio Duplex</h1><p>Page not found</p>")
+
+
+@app.get("/audio_duplex_openai", response_class=HTMLResponse)
+async def audio_duplex_openai():
+    """Audio Duplex 页面，使用独立 OpenAI API Thinker 后端。"""
+    if not app_registry.is_enabled("audio_duplex_openai"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "audio-duplex-openai", "audio_duplex.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Audio Duplex OpenAI Thinker</h1><p>Page not found</p>")
+
+
+@app.get("/thinker", response_class=HTMLResponse)
+async def thinker_page():
+    """Talker-Thinker Control Plane Demo 页面"""
+    if not app_registry.is_enabled("thinker"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "thinker", "thinker.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Thinker</h1><p>Thinker page not found</p>")
+
+
+@app.get("/realtime", response_class=HTMLResponse)
+async def realtime_page():
+    """Realtime API Demo 页面（OpenAI Realtime Protocol 风格双工）"""
+    page_path = os.path.join(static_dir, "realtime", "realtime.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Realtime API</h1><p>Page not found</p>")
+
+
+# ============ Docs Hosting ============
+
+docs_static_dir = os.path.join(static_dir, "docs")
+
+
+@app.api_route("/docs", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def docs_index():
+    """Docs entry: Fumadocs static site."""
+    return RedirectResponse(url="/docs/zh/", status_code=302)
+
+
+@app.api_route("/docs/overview", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def docs_legacy_overview():
+    """Compatibility redirect for the previous runtime docs route."""
+    return RedirectResponse(url="/docs/zh/realtime-api/overview/", status_code=302)
+
+
+@app.api_route("/docs/video", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def docs_legacy_video():
+    """Compatibility redirect for the previous runtime docs route."""
+    return RedirectResponse(url="/docs/zh/realtime-api/video/", status_code=302)
+
+
+@app.api_route("/docs/audio", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def docs_legacy_audio():
+    """Compatibility redirect for the previous runtime docs route."""
+    return RedirectResponse(url="/docs/zh/realtime-api/audio/", status_code=302)
+
+
+@app.api_route("/docs/en", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def docs_en_index():
+    """English docs entry."""
+    return RedirectResponse(url="/docs/en/", status_code=302)
+
+
+@app.api_route("/docs/en/overview", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def docs_en_legacy_overview():
+    """Compatibility redirect for the previous English runtime docs route."""
+    return RedirectResponse(url="/docs/en/realtime-api/overview/", status_code=302)
+
+
+@app.api_route("/docs/en/video", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def docs_en_legacy_video():
+    """Compatibility redirect for the previous English runtime docs route."""
+    return RedirectResponse(url="/docs/en/realtime-api/video/", status_code=302)
+
+
+@app.api_route("/docs/en/audio", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def docs_en_legacy_audio():
+    """Compatibility redirect for the previous English runtime docs route."""
+    return RedirectResponse(url="/docs/en/realtime-api/audio/", status_code=302)
+
+
+app.mount("/docs", StaticFiles(directory=docs_static_dir, html=True, check_dir=False), name="docs")
+
+
+# ============ Realtime API (OpenAI Realtime Protocol) ============
+
+@app.websocket("/v1/realtime")
+async def realtime_ws(ws: WebSocket):
+    """Unified API V2 WebSocket for chat and realtime duplex modes."""
+
+    session_id = f"rt_{int(datetime.now().timestamp()*1000)}"
+    mode = ws.query_params.get("mode", "video")
+
+    if mode == "chat":
+        if not app_registry.is_enabled("turnbased"):
+            await ws.close(code=1008, reason="Turn-based Chat is currently disabled")
+            return
+        await _api_worker_passthrough_ws(
+            ws,
+            request_type="chat",
+            worker_status=GatewayWorkerStatus.BUSY_CHAT,
+            worker_path=f"/v1/worker/sessions/{session_id}/chat",
+            session_id=session_id,
+            source_channel="realtime_api",
+            source_mode=mode,
+        )
+        return
+
+    if mode not in {"video", "audio"}:
+        await ws.close(code=1008, reason=f"Unsupported realtime mode: {mode}")
+        return
+
+    max_duration_s = 300 if mode == "video" else 600
+    request_type = "omni_duplex" if mode == "video" else "audio_duplex"
+
+    await _api_worker_passthrough_ws(
+        ws,
+        request_type=request_type,
+        worker_status=GatewayWorkerStatus.DUPLEX_ACTIVE,
+        worker_path=f"/v1/worker/sessions/{session_id}/duplex",
+        session_id=session_id,
+        source_channel="realtime_api",
+        source_mode=mode,
+        max_duration_s=max_duration_s,
+    )
+
+
+@app.get("/mobile-omni", include_in_schema=False)
+async def mobile_omni_redirect():
+    """移动版 Omni 入口重定向到带尾斜杠版本"""
+    return RedirectResponse(url="/mobile-omni/", status_code=302)
+
+
+@app.get("/mobile-omni/", response_class=HTMLResponse)
+async def mobile_omni():
+    """移动版全双工页：复用桌面 omni-app.js，外壳为 static/mobile-omni/"""
+    if not app_registry.is_enabled("omni"):
+        return RedirectResponse(url="/", status_code=302)
+    page_path = os.path.join(static_dir, "mobile-omni", "index.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>Mobile Omni</h1><p>Page not found</p>", status_code=404)
+
+
+@app.get("/mobile", include_in_schema=False)
+async def mobile_redirect():
+    """移动端入口重定向到带尾斜杠版本，确保相对资源路径正确解析"""
+    return RedirectResponse(url="/mobile/", status_code=302)
+
+
+@app.get("/mobile/", response_class=HTMLResponse)
+async def mobile():
+    """移动端 React 预览页面"""
+    page_path = os.path.join(static_dir, "mobile", "index.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse(
+        "<h1>Mobile Preview</h1>"
+        "<p>Build output not found. Run "
+        "<code>cd frontend/mobile && bun run --bun build:static</code> "
+        "or <code>npm run build:static</code>.</p>",
+        status_code=404,
+    )
+
+
+@app.api_route("/mobile/{asset_path:path}", methods=["GET", "HEAD"])
+async def mobile_asset(asset_path: str):
+    """移动端构建产物静态资源"""
+    mobile_root = os.path.realpath(os.path.join(static_dir, "mobile"))
+    full_path = os.path.realpath(os.path.join(mobile_root, asset_path))
+
+    if not full_path.startswith(mobile_root + os.sep):
+        raise HTTPException(status_code=400, detail="Path traversal detected")
+    if not os.path.exists(full_path) or os.path.isdir(full_path):
+        raise HTTPException(status_code=404, detail=f"Mobile asset not found: {asset_path}")
+
+    return FileResponse(full_path)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin():
+    """Admin Dashboard"""
+    admin_path = os.path.join(static_dir, "admin.html")
+    if os.path.exists(admin_path):
+        return FileResponse(admin_path)
+    return HTMLResponse("<h1>Admin</h1><p>Admin page not found</p>")
+
+
+# ============ 入口 ============
+
+def main():
+    from config import get_config
+    cfg = get_config()
+
+    parser = argparse.ArgumentParser(description="MiniCPMO45 Gateway")
+    parser.add_argument("--port", type=int, default=None, help=f"Gateway port (default: {cfg.gateway_port})")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
+    parser.add_argument("--workers", type=str, default=None, help="Worker addresses, comma-separated")
+    parser.add_argument("--num-workers", type=int, default=None, help="Number of workers (auto-generate addresses)")
+    parser.add_argument("--max-queue-size", type=int, default=None, help="Max queue size")
+    parser.add_argument("--timeout", type=float, default=None, help="Request timeout (s)")
+    # 协议选择：默认 HTTPS，--http 可降级为 HTTP
+    proto_group = parser.add_mutually_exclusive_group()
+    proto_group.add_argument("--https", action="store_true", default=True,
+                             help="启用 HTTPS（默认，自签名证书）")
+    proto_group.add_argument("--http", action="store_true",
+                             help="降级为 HTTP（不推荐，麦克风等浏览器 API 需要 HTTPS）")
+    parser.add_argument("--ssl-certfile", type=str, default="certs/cert.pem", help="SSL cert file path")
+    parser.add_argument("--ssl-keyfile", type=str, default="certs/key.pem", help="SSL key file path")
+    parser.add_argument("--lang", type=str, default=None, choices=["zh", "en"],
+                         help="Default UI language (zh/en). Overrides config.json. "
+                              "Clients can still switch; this sets the server-side default.")
+    args = parser.parse_args()
+
+    # --http 被指定时，关闭 HTTPS
+    use_https = not args.http
+
+    port = args.port or cfg.gateway_port
+
+    # Worker 地址：优先命令行，否则根据 num_workers 自动生成
+    if args.workers:
+        worker_list = args.workers.split(",")
+    elif args.num_workers:
+        worker_list = cfg.worker_addresses(args.num_workers)
+    else:
+        # 默认 1 个 Worker
+        worker_list = cfg.worker_addresses(1)
+
+    if args.lang:
+        GATEWAY_CONFIG["default_lang"] = args.lang
+
+    GATEWAY_CONFIG.update({
+        "workers": worker_list,
+        "max_queue_size": args.max_queue_size or cfg.max_queue_size,
+        "timeout": args.timeout or cfg.request_timeout,
+        "eta_config": {
+            "eta_chat_s": cfg.eta_chat_s,
+            "eta_half_duplex_s": cfg.eta_half_duplex_s,
+            "eta_audio_duplex_s": cfg.eta_audio_duplex_s,
+            "eta_omni_duplex_s": cfg.eta_omni_duplex_s,
+        },
+        "eta_ema_alpha": cfg.eta_ema_alpha,
+        "eta_ema_min_samples": cfg.eta_ema_min_samples,
+    })
+
+    proto_label = "HTTPS" if use_https else "HTTP"
+    logger.info(f"Starting Gateway on port {port} ({proto_label})")
+    logger.info(f"Workers: {worker_list}")
+
+    ssl_kwargs = {}
+    if use_https:
+        cert = args.ssl_certfile
+        key = args.ssl_keyfile
+        if not os.path.exists(cert) or not os.path.exists(key):
+            logger.error(f"SSL cert/key not found: {cert}, {key}")
+            logger.error("Generate with: openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes -subj '/CN=dev'")
+            logger.error("Or use --http to start without HTTPS")
+            return
+        ssl_kwargs = {"ssl_certfile": cert, "ssl_keyfile": key}
+        logger.info(f"HTTPS enabled: cert={cert}, key={key}")
+    else:
+        logger.warning("Running in HTTP mode (no TLS). Browser microphone/camera APIs may not work.")
+
+    # Bump WS max payload from uvicorn's 16 MiB default to 128 MiB so that
+    # base64-encoded video attachments coming in from the browser can be
+    # proxied to a worker without being rejected with code 1009.
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=port,
+        ws_max_size=128 * 1024 * 1024,
+        **ssl_kwargs,
+    )
+
+
+if __name__ == "__main__":
+    main()

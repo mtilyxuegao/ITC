@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenAI Realtime Audio</title>
+    <link rel="stylesheet" href="/static/audio-duplex-openai/audio-duplex.css">
+    <script src="/static/shared/i18n.js"></script>
+</head>
+<body>
+<header class="header">
+    <div class="header-left">
+        <h1>OpenAI Realtime Audio</h1>
+        <nav class="nav-links">
+            <a href="/">Home</a>
+            <a href="/audio_duplex_openai" class="active">OpenAI Realtime</a>
+        </nav>
+    </div>
+    <div class="header-right">
+        <span class="status-badge" id="serviceStatus">Checking...</span>
+    </div>
+</header>
+
+<main class="main">
+    <section class="voice-panel">
+        <div class="wave-shell">
+            <canvas id="waveCanvas"></canvas>
+            <div class="status-lamp" id="statusLamp">
+                <span class="dot"></span>
+                <span id="statusText">Idle</span>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="ctrl-btn primary" id="btnStart">Start</button>
+            <button class="ctrl-btn" id="btnMute" disabled>Mute</button>
+            <button class="ctrl-btn danger" id="btnStop" disabled>Stop</button>
+        </div>
+
+        <div class="settings">
+            <label>
+                <span>Voice</span>
+                <select id="voiceSelect">
+                    <option value="marin">marin</option>
+                </select>
+            </label>
+            <label>
+                <span>Instructions</span>
+                <textarea id="instructions" rows="5">你是一个自然、简洁的实时语音助手。请用用户的语言回答，除非用户要求详细解释，否则保持回答短而清楚。</textarea>
+            </label>
+        </div>
+    </section>
+
+    <section class="conversation-panel">
+        <div class="conv-header">
+            <span>Conversation</span>
+            <span id="sessionInfo">OpenAI Realtime</span>
+        </div>
+        <div class="conv-log" id="chatLog">
+            <div class="conv-empty" id="chatEmpty">Start a session</div>
+        </div>
+    </section>
+</main>
+
+<audio id="remoteAudio" autoplay></audio>
+
+<script type="module">
+import { initNav } from '/static/shared/app-nav.js';
+initNav('audio_duplex_openai');
+</script>
+<script type="module" src="/static/audio-duplex-openai/audio-duplex-app.js"></script>
+</body>
+</html>

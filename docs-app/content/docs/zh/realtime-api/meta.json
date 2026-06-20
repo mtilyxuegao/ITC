@@ -1,0 +1,11 @@
+{
+  "title": "Realtime API",
+  "defaultOpen": true,
+  "pages": [
+    "overview",
+    "chat",
+    "video",
+    "audio",
+    "examples"
+  ]
+}
