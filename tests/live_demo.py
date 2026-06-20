@@ -55,7 +55,7 @@ async def main():
             log.info("✅ 已附着会话 %s — 开始监听(聊跑偏话题会被打断)", sid)
             orch = Orchestrator(cfg, observer, thinker)
             try:
-                await asyncio.gather(orch.consume_talker(), orch.thinker_loop())
+                await asyncio.gather(orch.consume_talker(), orch.thinker_loop(), orch.asr_loop())
             except Exception as e:  # noqa: BLE001
                 log.warning("session loop error: %s", e)
             finally:
