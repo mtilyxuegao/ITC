@@ -34,23 +34,39 @@ async def _main() -> None:
     )
     log = logging.getLogger("tt.run")
 
-    if cfg.talker_observer_base:
-        talker = GatewayObserver(cfg.talker_observer_base)
-        talker_desc = f"observer@{cfg.talker_observer_base}"
-    else:
-        talker = TalkerClient(cfg.talker_gateway_ws, mode=cfg.talker_session_mode)
-        talker_desc = f"client@{cfg.talker_gateway_ws}"
     thinker_desc = (f"openai:{cfg.openai_model}" if cfg.thinker_provider == "openai"
                     else f"sglang:{cfg.thinker_model}")
+    talker_desc = (f"observer@{cfg.talker_observer_base}" if cfg.talker_observer_base
+                   else f"client@{cfg.talker_gateway_ws}")
     log.info("Talker=%s  Thinker=%s  ASR=%s", talker_desc, thinker_desc,
              "on" if cfg.asr_enabled else "off")
 
     async with make_thinker(cfg) as thinker:
-        orch = Orchestrator(cfg, talker, thinker)
-        try:
-            await orch.run()
-        finally:
-            await talker.close()
+        if cfg.talker_observer_base:
+            # 观察者模式:常驻进程,自动等待 / 重连浏览器会话。
+            # 浏览器会话起停、刷新都不退出——每轮新建 GatewayObserver(它会轮询
+            # /observer/sessions 直到出现会话),会话结束后 sleep 再等下一个。
+            log.info("observer 常驻:等待浏览器在 %s 开启会话…", cfg.talker_observer_base)
+            while True:
+                talker = GatewayObserver(cfg.talker_observer_base)
+                try:
+                    await Orchestrator(cfg, talker, thinker).run()
+                    log.info("会话结束,等待下一个会话…")
+                except Exception as e:  # noqa: BLE001
+                    log.warning("observer 会话异常(%s);5s 后重试", e)
+                finally:
+                    try:
+                        await talker.close()
+                    except Exception:
+                        pass
+                await asyncio.sleep(5)
+        else:
+            talker = TalkerClient(cfg.talker_gateway_ws, mode=cfg.talker_session_mode)
+            orch = Orchestrator(cfg, talker, thinker)
+            try:
+                await orch.run()
+            finally:
+                await talker.close()
 
 
 def main() -> None:
