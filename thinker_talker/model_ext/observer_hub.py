@@ -74,7 +74,18 @@ def unsubscribe(session_id: str, q) -> None:
 
 
 async def inject(session_id: str, raw: str) -> None:
-    """把观察端发来的消息(如 control.force_speak)注入该会话的 worker。"""
+    """处理观察端发来的消息:
+       - tt.status(编排层的状态/决策)→ 广播给本会话其他订阅者(前端状态面板);
+       - 其它(如 control.force_speak)→ 注入该会话的 worker。
+    """
+    import json
+    try:
+        mtype = json.loads(raw).get("type")
+    except Exception:
+        mtype = None
+    if mtype == "tt.status":
+        publish(session_id, raw)  # 广播给前端面板,不发给 worker
+        return
     inj = _injectors.get(session_id)
     if inj is not None:
         try:

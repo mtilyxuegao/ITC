@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Optional
 
 import aiohttp
@@ -47,6 +48,7 @@ class GPTThinker:
         self.url = cfg.openai_base_url.rstrip("/") + "/responses"
         self._session: Optional[aiohttp.ClientSession] = None
         self._inflight: Optional[asyncio.Task] = None
+        self.last_latency_ms = 0
         if not self.api_key:
             raise RuntimeError("缺 OpenAI key:在 .env 设 OPENAI_TOKEN")
 
@@ -77,12 +79,15 @@ class GPTThinker:
             "reasoning": {"effort": "low"},
         }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        logger.info("gpt INPUT(发给大模型,证明已传入): %r", body["input"][:300])
+        t0 = time.time()
         async with self._session.post(self.url, json=body, headers=headers) as resp:
             if resp.status >= 400:
                 detail = (await resp.text())[:300]
                 logger.warning("openai error %s: %s", resp.status, detail)
                 return Directive.noop(f"openai {resp.status}")
             data = await resp.json()
+        self.last_latency_ms = int((time.time() - t0) * 1000)
 
         text, searches = _extract_text_and_searches(data)
         for q in searches:

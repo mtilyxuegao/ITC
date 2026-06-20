@@ -90,9 +90,13 @@ class Orchestrator:
             if not ctx.strip():
                 continue
             epoch_snapshot = self.state.snapshot_epoch()
+            searches: list = []
+            t0 = time.time()
             try:
                 directive = await self.thinker.think(
-                    ctx, on_search=lambda q, r: self._tlog("大模型·搜索", f"{q} → {r[:100].replace(chr(10), ' ')}")
+                    ctx,
+                    on_search=lambda q, r: (searches.append(q),
+                                            self._tlog("大模型·搜索", f"{q} → {r[:80].replace(chr(10), ' ')}")),
                 )
             except asyncio.CancelledError:
                 logger.debug("thinker tick aborted")
@@ -100,13 +104,33 @@ class Orchestrator:
             except Exception as e:  # noqa: BLE001
                 logger.warning("thinker error: %s", e)
                 continue
-            # 每个 tick 都记一行,证明大模型确实在被调用
+            latency_ms = int((time.time() - t0) * 1000)
             _d = directive
-            self._tlog("大模型", f"{_d.action.value}"
+            # 每 tick 记一行,证明大模型在被调用 + 输入 + 耗时
+            self._tlog("大模型·输入", ctx.replace("\n", " | ")[-200:])
+            self._tlog("大模型·决策", f"{_d.action.value}"
                        + (f" conf={_d.confidence:.2f}" if _d.action.value == "CUT" else "")
                        + (f' "{_d.text}"' if _d.text else "")
+                       + (f" [{len(searches)}次搜索]" if searches else "")
+                       + f" ({latency_ms}ms)"
                        + (f" — {_d.reason[:50]}" if _d.reason else ""))
+            await self._send_status(stage="thinker", input=ctx, directive=_d,
+                                    searches=searches, latency_ms=latency_ms)
             await self._apply_directive(directive, epoch_snapshot)
+
+    async def _send_status(self, *, stage: str, directive=None, **kw) -> None:
+        """把状态推给前端面板(若 talker 支持 send_status)。"""
+        send = getattr(self.talker, "send_status", None)
+        if send is None:
+            return
+        payload = {"stage": stage, "ts": time.time(), **kw}
+        if directive is not None:
+            payload.update(action=directive.action.value, text=directive.text,
+                           reason=directive.reason, confidence=directive.confidence)
+        try:
+            await send(payload)
+        except Exception:
+            pass
 
     async def _apply_directive(self, d: Directive, epoch_snapshot: int) -> None:
         # 汇入作废:过期一律丢弃(守过期答案 + 过期 CUT)
@@ -125,6 +149,7 @@ class Orchestrator:
             self.arbiter.take(Floor.THINKER)
             await self.talker.force_speak(d.text)
             self._tlog("→小模型说出(INJECT)", d.text)
+            await self._send_status(stage="fired", action="INJECT", text=d.text)
             self.state.add_turn("talker", d.text)
             self.arbiter.release()
             return
@@ -137,6 +162,7 @@ class Orchestrator:
             # system-prompt 软触发方案,否则模型会把"[CUT]"当文本念出来)。
             await self.talker.force_speak(d.text)
             self._tlog("→小模型打断说出(CUT)", d.text)
+            await self._send_status(stage="fired", action="CUT", text=d.text)
             self.state.add_turn("talker", d.text)
             self.arbiter.release()
 

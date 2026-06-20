@@ -165,6 +165,16 @@ class GatewayObserver:
             await self._ws.send(json.dumps({"type": "control.force_speak", "payload": {"text": text}}))
         logger.info("force_speak -> %r", text[:60])
 
+    async def send_status(self, payload: dict) -> None:
+        """把编排层状态/决策推给前端面板(经 hub 广播)。失败不致命。"""
+        if self._ws is None:
+            return
+        try:
+            async with self._send_lock:
+                await self._ws.send(json.dumps({"type": "tt.status", **payload}))
+        except Exception:
+            pass
+
     async def events(self):
         if self._ws is None:
             raise RuntimeError("observer not connected")
