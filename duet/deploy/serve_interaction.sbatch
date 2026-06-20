@@ -28,14 +28,16 @@ echo "[minicpm] node=$NODE job=$JOB"
 nvidia-smi -L
 
 # --- Tier 3: backend (the only GPU process; Slurm pins the 1 allocated GPU) ---
-# torch.compile: set COMPILE_FLAG="--compile" to enable. DEFAULT OFF — MiniCPM's compile is
-# LAZY ("actual compilation triggers on first forward"), so the startup warmup_compile is a
-# no-op (~5s) and the FIRST real turn hangs while it JIT-compiles; if that first session wedges
-# before compiling, the Inductor cache stays empty and every restart re-pays it. Re-enable only
-# together with a real startup pre-warm (drive one synthetic duplex forward) so turn-1 is fast.
+# torch.compile: DEFAULT ON (pre-warm wired below). MiniCPM compiles llm.model + tts.model;
+# lazy compile is covered by startup warmup_compile() (duplex path) + the force_speak PRE-WARM
+# below, so turn-1 is hot, not a JIT stall. Reuse the warm Inductor cache from the earlier
+# compiled backend so this warmup is fast. Flip OFF for a fast cold start: COMPILE_FLAG= sbatch ...
+# (single worker only — the 2-worker variant hung loading the 2nd backend; the watchdog covers HA.)
+# DEFAULT OFF: lazy JIT triggers on first forward (>90s, two dynamic-shape paths) — can't be
+# reliably pre-warmed, turn-1 stalls; ~150-200ms steady win not worth it. ON: COMPILE_FLAG=--compile sbatch
 COMPILE_FLAG="${COMPILE_FLAG:-}"
 export CC=gcc CXX=g++
-export TORCHINDUCTOR_CACHE_DIR=/home/justin/.cache/torchinductor_minicpm
+export TORCHINDUCTOR_CACHE_DIR=/home/justin/.cache/torchinductor_minicpm0
 $PY -m py_backend.server --host 0.0.0.0 --port 22500 --gpu-id 0 --model-path "$MODEL" $COMPILE_FLAG \
   > /home/justin/minicpm-backend.$JOB.log 2>&1 &
 BPID=$!
@@ -69,6 +71,22 @@ until curl -sf http://127.0.0.1:8006/health >/dev/null 2>&1; do
   sleep 2
 done
 echo "[minicpm] gateway ready on :8006"
+
+# --- PRE-WARM: trigger lazy torch.compile on the FORCE_SPEAK path before any user connects ---
+# smoke_force_speak.py opens ws://localhost:22500/backend, sends one control.force_speak, closes
+# its session (backend allows one active session, so it must finish before a browser connects).
+# Best-effort: a failed pre-warm only means turn-1 pays the JIT, so we never abort the launch.
+if [ -n "$COMPILE_FLAG" ]; then
+  echo "[minicpm] pre-warming force_speak path (compile on)..."
+  pw_t0=$SECONDS
+  if timeout 240 $PY /home/justin/smoke_force_speak.py \
+       > /home/justin/minicpm-prewarm.$JOB.log 2>&1; then
+    echo "[minicpm] force_speak pre-warm OK ($((SECONDS - pw_t0))s) — turn-1 should be hot"
+  else
+    echo "[minicpm] force_speak pre-warm FAILED/timed out ($((SECONDS - pw_t0))s); turn-1 will JIT. last log:"
+    tail -20 /home/justin/minicpm-prewarm.$JOB.log
+  fi
+fi
 
 cat > "$ENDPOINT" <<EOF
 # DUET-Lite interaction-layer (MiniCPM-o 4.5 duplex) endpoint — job $JOB on $NODE
