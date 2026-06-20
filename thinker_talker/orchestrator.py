@@ -33,6 +33,7 @@ class Orchestrator:
         self.arbiter = FloorArbiter(self.state)
         self._stop = asyncio.Event()
         self._tlog_path = cfg.transcript_log_path or ""
+        self._last_thought_ctx = None  # 去重:上下文没变就不重复打扰大模型
 
     def _tlog(self, tag: str, text: str) -> None:
         """把一条对话/决策写进 conversation log(便于核对大模型是否真被调用)。"""
@@ -89,6 +90,10 @@ class Orchestrator:
             ctx = self.state.render_context()
             if not ctx.strip():
                 continue
+            # 去重:上下文无新增就不再调用大模型(避免空转/烧钱/刷屏)
+            if ctx == self._last_thought_ctx:
+                continue
+            self._last_thought_ctx = ctx
             epoch_snapshot = self.state.snapshot_epoch()
             searches: list = []
             t0 = time.time()
