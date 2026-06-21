@@ -4,11 +4,11 @@
 # 然后浏览器打开 https://localhost:8006 即可访问 demo(自签证书,点"继续前往")。
 #
 # 用法:
-#   SSH_KEY=~/.ssh/itc SERVER=ubuntu@192.222.53.81 bash tunnel.sh
+#   SSH_KEY=~/.ssh/your_key SERVER=ubuntu@<your-server-ip> bash tunnel.sh
 set -euo pipefail
 
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/itc}"
-SERVER="${SERVER:-ubuntu@192.222.53.81}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+SERVER="${SERVER:-ubuntu@<your-server-ip>}"
 PORT="${PORT:-8006}"
 
 echo "建立隧道: 本地 $PORT -> $SERVER:$PORT (Ctrl+C 断开)"
