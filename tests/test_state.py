@@ -30,7 +30,7 @@ def test_context_roundtrip():
     s.add_turn("talker", "晴天")
     s.add_turn("user", "   ")          # 空白被忽略
     ctx = s.render_context()
-    assert "用户: 今天天气" in ctx
+    assert "User: 今天天气" in ctx
     assert "晴天" in ctx
     assert len(s.recent_context()) == 2
 
