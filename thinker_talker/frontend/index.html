@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ITC · Talker–Thinker — Real-Time Dual-Brain Interaction</title>
+<style>
+  :root{
+    /* accent is themeable from the settings drawer */
+    --accent:#5b9dff; --accent2:#7c5cff;
+    --bg:#0b0d12; --bg2:#0f1218; --panel:#13161f; --panel2:#191d28;
+    --ink:#eaf0f8; --muted:#93a0b4; --faint:#5b6675; --line:#242a36;
+    --talker:#2bb3a3; --think:#7c5cff; --orch:#5b9dff;
+    --ok:#56d364; --warn:#ffb454; --bad:#ff6b6b;
+    --r:16px; --speed:.45s;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; overflow-x:hidden;
+  }
+  /* ambient gradient-mesh background */
+  .mesh{position:fixed;inset:0;z-index:-2;overflow:hidden;background:
+    radial-gradient(1200px 800px at 12% -8%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 60%),
+    radial-gradient(1100px 700px at 100% 0%, color-mix(in srgb, var(--accent2) 20%, transparent), transparent 55%),
+    radial-gradient(900px 900px at 70% 110%, color-mix(in srgb, var(--talker) 14%, transparent), transparent 60%),
+    var(--bg)}
+  .mesh::after{content:"";position:absolute;inset:0;opacity:.5;background:
+    radial-gradient(circle at 50% 50%, transparent 60%, rgba(0,0,0,.45));mix-blend-mode:multiply}
+  body.no-motion .mesh{animation:none}
+  body:not(.no-motion) .mesh{animation:drift 26s ease-in-out infinite alternate}
+  @keyframes drift{from{transform:translate3d(-2%,-1%,0) scale(1.05)}to{transform:translate3d(2%,2%,0) scale(1.1)}}
+  .grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.035;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  a{color:var(--accent);text-decoration:none}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+  .btn{appearance:none;border:1px solid var(--line);background:var(--panel2);color:var(--ink);
+    border-radius:11px;padding:10px 16px;font:inherit;font-weight:600;cursor:pointer;
+    transition:border-color .2s, background .2s, transform .1s}
+  .btn:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;
+    box-shadow:0 8px 30px -10px color-mix(in srgb,var(--accent) 70%,transparent)}
+  .btn.ghost{background:transparent}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;letter-spacing:.04em;
+    padding:4px 11px;border-radius:999px;border:1px solid var(--line)}
+  .pill.talker{color:#5fe0d0;background:rgba(43,179,163,.12);border-color:rgba(43,179,163,.35)}
+  .pill.think{color:#b3a2ff;background:rgba(124,92,255,.12);border-color:rgba(124,92,255,.35)}
+  .pill.orch{color:#9cc3ff;background:rgba(91,157,255,.12);border-color:rgba(91,157,255,.35)}
+  .dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor}
+
+  /* ---------- top nav ---------- */
+  nav{position:sticky;top:0;z-index:30;backdrop-filter:blur(14px);
+    background:color-mix(in srgb,var(--bg) 72%,transparent);border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
+  nav .wrap{display:flex;align-items:center;gap:14px;height:62px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:.02em}
+  .brand .mark{width:30px;height:30px;border-radius:9px;position:relative;flex:0 0 auto;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));overflow:hidden}
+  .brand .mark::before,.brand .mark::after{content:"";position:absolute;border-radius:50%}
+  .brand .mark::before{width:13px;height:13px;background:rgba(255,255,255,.92);left:5px;top:8px}
+  .brand .mark::after{width:13px;height:13px;background:rgba(255,255,255,.55);right:5px;top:8px;mix-blend-mode:screen}
+  .brand small{display:block;font-weight:500;color:var(--muted);letter-spacing:.12em;font-size:10px;text-transform:uppercase}
+  nav .sp{flex:1}
+  .conn{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12.5px;font-weight:600}
+  .iconbtn{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel2);cursor:pointer;color:var(--muted);transition:.2s}
+  .iconbtn:hover{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
+
+  /* ---------- landing ---------- */
+  .hero{padding:74px 0 40px;text-align:center;position:relative}
+  .eyebrow{display:inline-flex;align-items:center;gap:9px;color:var(--muted);font-weight:700;
+    letter-spacing:.16em;font-size:11.5px;text-transform:uppercase;
+    border:1px solid var(--line);padding:6px 14px;border-radius:999px;background:rgba(255,255,255,.02)}
+  h1{font-size:clamp(34px,6vw,60px);line-height:1.04;margin:22px auto 18px;max-width:16ch;font-weight:800;letter-spacing:-.02em}
+  h1 .g{background:linear-gradient(120deg,var(--accent),var(--accent2) 60%,#d8b4ff);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{color:var(--muted);max-width:64ch;margin:0 auto;font-size:clamp(15px,1.7vw,18px)}
+  .lede b{color:var(--ink);font-weight:600}
+  .badges{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:26px 0 6px}
+
+  /* mode cards */
+  .modes{display:grid;gap:20px;grid-template-columns:1fr;margin:44px 0 18px}
+  @media(min-width:760px){.modes{grid-template-columns:1fr 1fr}}
+  .mode{position:relative;text-align:left;border:1px solid var(--line);border-radius:20px;padding:26px;
+    background:linear-gradient(180deg,var(--panel),var(--bg2));cursor:pointer;overflow:hidden;
+    transition:transform var(--speed) cubic-bezier(.2,.8,.2,1), border-color var(--speed), box-shadow var(--speed)}
+  .mode:hover{transform:translateY(-4px);border-color:color-mix(in srgb,var(--mc,var(--accent)) 60%,var(--line));
+    box-shadow:0 30px 60px -30px color-mix(in srgb,var(--mc,var(--accent)) 60%,transparent)}
+  .mode .glow{position:absolute;inset:auto -30% -60% -30%;height:60%;filter:blur(60px);opacity:.5;
+    background:radial-gradient(circle, var(--mc,var(--accent)), transparent 70%);pointer-events:none}
+  .mode .ic{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;margin-bottom:18px;
+    background:color-mix(in srgb,var(--mc) 16%,transparent);border:1px solid color-mix(in srgb,var(--mc) 40%,transparent);color:var(--mc)}
+  .mode h3{margin:0 0 4px;font-size:22px;font-weight:800;letter-spacing:-.01em}
+  .mode .tag{color:var(--mc);font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+  .mode p{color:var(--muted);margin:12px 0 18px;font-size:14.5px}
+  .mode .go{display:inline-flex;align-items:center;gap:8px;font-weight:700;color:var(--ink)}
+  .mode .go svg{transition:transform .25s}
+  .mode:hover .go svg{transform:translateX(5px)}
+  .feat{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+  .feat span{font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:7px;padding:3px 9px}
+
+  /* how-it-works strip */
+  .strip{display:grid;gap:14px;grid-template-columns:1fr;margin:40px 0 80px}
+  @media(min-width:760px){.strip{grid-template-columns:repeat(3,1fr)}}
+  .step{border:1px solid var(--line);border-radius:14px;padding:18px 18px;background:var(--panel)}
+  .step .n{font-size:12px;font-weight:800;color:var(--accent);letter-spacing:.1em}
+  .step h4{margin:8px 0 6px;font-size:15.5px}
+  .step p{margin:0;color:var(--muted);font-size:13.5px}
+
+  /* ---------- stage (live session) ---------- */
+  .stage{display:none;padding:24px 0 60px}
+  .stage.on{display:block;animation:fade .5s ease both}
+  @keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .stage-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .stage-head .back{cursor:pointer}
+  .stage-head h2{margin:0;font-size:20px;font-weight:800}
+  .stage-grid{display:grid;gap:20px;grid-template-columns:1fr}
+  @media(min-width:920px){.stage-grid{grid-template-columns:1.25fr .95fr}}
+
+  .canvas-card{position:relative;border:1px solid var(--line);border-radius:20px;overflow:hidden;
+    background:radial-gradient(120% 120% at 50% 0%, var(--panel2), var(--bg));min-height:430px;display:grid;place-items:center}
+  #viz{width:100%;height:100%;display:block;position:absolute;inset:0}
+  #cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;transform:scaleX(-1)}
+  .canvas-card .overlay{position:relative;z-index:2;text-align:center;padding:30px}
+  .canvas-card .state-big{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .canvas-card .caption{margin-top:10px;font-size:20px;font-weight:700;max-width:30ch;min-height:1.4em}
+  .liveband{position:absolute;left:0;right:0;bottom:0;z-index:3;display:flex;align-items:center;gap:14px;
+    padding:14px 18px;background:linear-gradient(0deg, rgba(0,0,0,.55), transparent)}
+  .liveband .who{font-weight:700;font-size:13px}
+  .controls{display:flex;align-items:center;gap:10px;margin-left:auto}
+  .mic{width:54px;height:54px;border-radius:50%;border:none;cursor:pointer;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;box-shadow:0 10px 30px -8px var(--accent);transition:.2s}
+  .mic.live{background:linear-gradient(135deg,var(--bad),#ff9a6b);box-shadow:0 0 0 0 rgba(255,107,107,.5);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,107,107,.5)}70%{box-shadow:0 0 0 16px rgba(255,107,107,0)}100%{box-shadow:0 0 0 0 rgba(255,107,107,0)}}
+
+  /* dual-brain panel */
+  .brain{border:1px solid var(--line);border-radius:20px;background:var(--panel);overflow:hidden;display:flex;flex-direction:column}
+  .brain .hd{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+  .brain .hd b{font-size:14px}
+  .lanes{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}
+  .lane{background:var(--panel);padding:14px 16px}
+  .lane .lab{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:7px}
+  .lane .val{font-size:22px;font-weight:800;margin-top:6px;font-variant-numeric:tabular-nums}
+  .lane .sub{font-size:12px;color:var(--faint);margin-top:2px;min-height:1.3em}
+  .lane.talker .val{color:#5fe0d0}.lane.think .val{color:#b3a2ff}
+  .actrow{padding:12px 16px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;font-size:13px}
+  .chip{font-size:11px;font-weight:800;padding:3px 10px;border-radius:8px;letter-spacing:.05em}
+  .chip.NOOP{background:rgba(147,160,180,.16);color:#aeb8c7}
+  .chip.INJECT{background:rgba(86,211,100,.16);color:#7ee08a}
+  .chip.CUT{background:rgba(255,107,107,.18);color:#ff8f8f}
+  #log{flex:1;overflow:auto;padding:10px 14px;font:12.5px/1.6 ui-monospace,Menlo,Consolas,monospace;
+    background:#0a0c11;max-height:300px}
+  #log .row{padding:2px 0;display:flex;gap:8px;animation:fade .3s both}
+  #log .t{color:#4a5566;flex:0 0 auto}
+  #log .m{color:#c8d2e2;word-break:break-word}
+  .c-small{color:#5fe0d0}.c-big{color:#9cc3ff}.c-search{color:#ffb454}
+  .c-input{color:#8b95a6}.c-reason{color:#8b95a6}.c-fired{color:#ff7b7b}.c-asr{color:#ffd479}
+  .density-compact #log{font-size:11.5px;line-height:1.5}
+  .density-compact .lane .val{font-size:18px}
+
+  /* ---------- settings drawer ---------- */
+  .scrim{position:fixed;inset:0;z-index:40;background:rgba(4,6,10,.55);backdrop-filter:blur(3px);
+    opacity:0;pointer-events:none;transition:opacity .3s}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;top:0;right:0;z-index:50;height:100%;width:min(420px,92vw);
+    background:linear-gradient(180deg,var(--panel),var(--bg2));border-left:1px solid var(--line);
+    transform:translateX(102%);transition:transform .4s cubic-bezier(.2,.8,.2,1);
+    display:flex;flex-direction:column;box-shadow:-30px 0 80px -40px #000}
+  .drawer.on{transform:none}
+  .drawer .dh{padding:20px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center}
+  .drawer .dh b{font-size:16px}
+  .drawer .body{padding:6px 22px 30px;overflow:auto}
+  .grp{padding:20px 0;border-bottom:1px solid var(--line)}
+  .grp:last-child{border-bottom:none}
+  .grp .gt{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+  .field{margin-bottom:16px}
+  .field>label{display:flex;justify-content:space-between;align-items:baseline;font-size:13.5px;font-weight:600;margin-bottom:8px}
+  .field .hint{font-weight:400;color:var(--faint);font-size:12px}
+  .field .vnow{color:var(--accent);font-weight:700}
+  input[type=range]{-webkit-appearance:none;width:100%;height:5px;border-radius:5px;
+    background:linear-gradient(90deg,var(--accent) var(--p,50%),var(--line) var(--p,50%));outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+    background:#fff;border:3px solid var(--accent);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+  .seg{display:flex;gap:6px;background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:4px}
+  .seg button{flex:1;border:none;background:transparent;color:var(--muted);font:inherit;font-weight:600;
+    font-size:13px;padding:8px;border-radius:8px;cursor:pointer;transition:.2s}
+  .seg button.on{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--ink)}
+  .swatches{display:flex;gap:10px}
+  .sw{width:30px;height:30px;border-radius:9px;cursor:pointer;border:2px solid transparent;transition:.15s}
+  .sw.on{border-color:#fff;transform:scale(1.08)}
+  .toggle{display:flex;align-items:center;justify-content:space-between}
+  .switch{position:relative;width:46px;height:26px;flex:0 0 auto}
+  .switch input{opacity:0;width:0;height:0}
+  .switch span{position:absolute;inset:0;background:var(--line);border-radius:999px;cursor:pointer;transition:.25s}
+  .switch span::before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.25s}
+  .switch input:checked+span{background:var(--accent)}
+  .switch input:checked+span::before{transform:translateX(20px)}
+  .txtin{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:9px;color:var(--ink);
+    padding:9px 11px;font:13px ui-monospace,Menlo,monospace}
+  .txtin:focus{outline:none;border-color:var(--accent)}
+
+  footer{border-top:1px solid var(--line);color:var(--faint);font-size:12.5px;padding:22px 0;text-align:center}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#222834;border-radius:9px}
+  ::-webkit-scrollbar-thumb:hover{background:#2e3543}
+</style>
+</head>
+<body>
+<div class="mesh"></div><div class="grain"></div>
+
+<nav>
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark"></div>
+      <div>ITC<small>Interaction Model</small></div>
+    </div>
+    <div class="sp"></div>
+    <div class="conn"><span class="dot" id="connDot" style="color:var(--faint)"></span><span id="connTxt">Idle</span></div>
+    <button class="iconbtn" id="openSettings" title="Settings" aria-label="Settings">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
+  </div>
+</nav>
+
+<!-- ============ LANDING ============ -->
+<main id="landing">
+  <div class="wrap">
+    <section class="hero">
+      <span class="eyebrow"><span class="dot" style="color:var(--accent)"></span>Reproducing the Thinking-Machines Interaction Model</span>
+      <h1>Two models, <span class="g">one mind.</span></h1>
+      <p class="lede">A full-duplex <b>Talker</b> listens, sees and speaks in real time. An asynchronous <b>Thinker</b>
+        reasons alongside it — free to inject a fact or cut in the instant it matters.
+        <b>Bidirectional interruption:</b> you can talk over the AI, and the AI can talk over you.</p>
+      <div class="badges">
+        <span class="pill talker"><span class="dot"></span>Talker · MiniCPM-o 4.5</span>
+        <span class="pill orch"><span class="dot"></span>Orchestrator · epoch fence</span>
+        <span class="pill think"><span class="dot"></span>Thinker · async reasoning</span>
+      </div>
+    </section>
+
+    <section class="modes">
+      <button class="mode" style="--mc:var(--talker)" data-mode="audio">
+        <div class="glow"></div>
+        <div class="ic">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/>
+          </svg>
+        </div>
+        <div class="tag">Voice</div>
+        <h3>Audio Duplex</h3>
+        <p>Pure full-duplex voice. Talk over it, it talks back, and a <b>local reasoning model</b> fact-checks live — no GPT in the loop.</p>
+        <div class="feat"><span>Barge-in</span><span>Live fact injection</span><span>AI-initiated cut-in</span></div>
+        <div class="go" style="margin-top:18px">Launch
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </div>
+      </button>
+
+      <button class="mode" style="--mc:var(--accent2)" data-mode="video">
+        <div class="glow"></div>
+        <div class="ic">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="2" y="6" width="14" height="12" rx="3"/><path d="M16 10l6-3v10l-6-3"/>
+          </svg>
+        </div>
+        <div class="tag">Vision + Voice</div>
+        <h3>Video Duplex</h3>
+        <p>See, hear and speak — all at once. The live full-duplex video pipeline: the model watches your camera while the two brains coordinate.</p>
+        <div class="feat"><span>Camera input</span><span>Streaming KV-cache</span><span>200ms micro-turns</span></div>
+        <div class="go" style="margin-top:18px">Launch
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </div>
+      </button>
+    </section>
+
+    <section class="strip">
+      <div class="step"><div class="n">01 · TALKER</div><h4>Real-time, full-duplex</h4>
+        <p>A 9B multimodal model streams speech and text while it keeps listening and watching — input and output never block each other.</p></div>
+      <div class="step"><div class="n">02 · ORCHESTRATOR</div><h4>Epoch fence + floor arbiter</h4>
+        <p>Decides who holds the mic and voids any stale answer or stale cut-in the moment a barge-in resets the epoch.</p></div>
+      <div class="step"><div class="n">03 · THINKER</div><h4>Async deep reasoning</h4>
+        <p>Watches the conversation and emits one of <code>NOOP / INJECT / CUT</code> — quietly correcting or interrupting only when confident.</p></div>
+    </section>
+  </div>
+</main>
+
+<!-- ============ STAGE ============ -->
+<section class="stage" id="stage">
+  <div class="wrap">
+    <div class="stage-head">
+      <button class="iconbtn back" id="back" title="Back">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+      </button>
+      <h2 id="stageTitle">Audio Duplex</h2>
+      <span class="pill" id="stagePill"><span class="dot"></span><span id="stagePillTxt">Voice</span></span>
+    </div>
+
+    <div class="stage-grid">
+      <!-- visualizer -->
+      <div class="canvas-card">
+        <canvas id="viz"></canvas>
+        <video id="cam" autoplay playsinline muted></video>
+        <div class="overlay">
+          <div class="state-big" id="vizState">Standing by</div>
+          <div class="caption" id="caption">Press the mic to start a live session.</div>
+        </div>
+        <div class="liveband">
+          <span class="who" id="whoTalking" style="color:var(--muted)">— idle —</span>
+          <div class="controls">
+            <button class="mic" id="mic" title="Start / stop">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- dual-brain telemetry -->
+      <div class="brain">
+        <div class="hd"><span class="dot" style="color:var(--accent)"></span><b>Dual-Brain Telemetry</b>
+          <span class="pill" id="srcPill" style="margin-left:auto;font-size:10.5px">simulated</span></div>
+        <div class="lanes">
+          <div class="lane talker">
+            <div class="lab"><span class="dot" style="color:var(--talker)"></span>Talker latency</div>
+            <div class="val" id="lTalker">—</div>
+            <div class="sub" id="sTalker">small model draft</div>
+          </div>
+          <div class="lane think">
+            <div class="lab"><span class="dot" style="color:var(--think)"></span>Thinker latency</div>
+            <div class="val" id="lThink">—</div>
+            <div class="sub" id="sThink">async reasoning</div>
+          </div>
+        </div>
+        <div class="actrow">Last decision:
+          <span class="chip NOOP" id="actChip">NOOP</span>
+          <span style="color:var(--muted)" id="actText">awaiting first tick…</span>
+        </div>
+        <div id="log"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SETTINGS DRAWER ============ -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer">
+  <div class="dh"><b>Settings</b>
+    <button class="iconbtn" id="closeSettings" style="margin-left:auto" aria-label="Close">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="body">
+
+    <div class="grp">
+      <div class="gt">Response</div>
+      <div class="field">
+        <label>Response length <span class="vnow" id="lenLabel">Balanced</span></label>
+        <input type="range" id="lenRange" min="0" max="3" step="1" value="1" />
+        <div class="hint" style="margin-top:7px">Caps the Thinker's reply — from a one-line correction to a full explanation.</div>
+      </div>
+      <div class="field">
+        <label>Cut-in sensitivity <span class="vnow" id="confLabel">0.70</span></label>
+        <input type="range" id="confRange" min="0.4" max="0.95" step="0.05" value="0.70" />
+        <div class="hint" style="margin-top:7px">Minimum confidence before the AI is allowed to interrupt you (<code>CUT</code>).</div>
+      </div>
+      <div class="field">
+        <label>Who wins a clash</label>
+        <div class="seg" id="prioSeg">
+          <button data-v="human_wins" class="on">Human wins</button>
+          <button data-v="ai_can_override">AI may override</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="gt">Visual</div>
+      <div class="field">
+        <label>Accent</label>
+        <div class="swatches" id="swatches">
+          <div class="sw on" data-a="#5b9dff" data-b="#7c5cff" style="background:linear-gradient(135deg,#5b9dff,#7c5cff)"></div>
+          <div class="sw" data-a="#2bb3a3" data-b="#5b9dff" style="background:linear-gradient(135deg,#2bb3a3,#5b9dff)"></div>
+          <div class="sw" data-a="#ff7b6b" data-b="#ffb454" style="background:linear-gradient(135deg,#ff7b6b,#ffb454)"></div>
+          <div class="sw" data-a="#b06bff" data-b="#ff6bd0" style="background:linear-gradient(135deg,#b06bff,#ff6bd0)"></div>
+          <div class="sw" data-a="#56d364" data-b="#2bb3a3" style="background:linear-gradient(135deg,#56d364,#2bb3a3)"></div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Telemetry density</label>
+        <div class="seg" id="densSeg">
+          <button data-v="comfortable" class="on">Comfortable</button>
+          <button data-v="compact">Compact</button>
+        </div>
+      </div>
+      <div class="field toggle">
+        <div><label style="margin:0">Ambient motion</label><div class="hint">Animated background & visualizer</div></div>
+        <label class="switch"><input type="checkbox" id="motionTgl" checked /><span></span></label>
+      </div>
+      <div class="field toggle">
+        <div><label style="margin:0">Mirror camera</label><div class="hint">Flip the video preview (video mode)</div></div>
+        <label class="switch"><input type="checkbox" id="mirrorTgl" checked /><span></span></label>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="gt">Connection</div>
+      <div class="field">
+        <label>Gateway endpoint</label>
+        <input class="txtin" id="gwInput" placeholder="https://localhost:8006" value="" />
+        <div class="hint" style="margin-top:7px">Attach to a live Talker session via the observer hook. Leave blank to run the built-in demo simulation.</div>
+      </div>
+    </div>
+
+  </div>
+</aside>
+
+<footer class="wrap">ITC · Talker–Thinker dual-brain · Hackathon build · runs against a live gateway or a self-contained simulation</footer>
+
+<script>
+(function(){
+  "use strict";
+  const $ = (id)=>document.getElementById(id);
+  const LS = "itc.settings";
+
+  // ---------- settings state ----------
+  const settings = Object.assign({
+    lenIdx:1, conf:0.70, prio:"human_wins", accentA:"#5b9dff", accentB:"#7c5cff",
+    density:"comfortable", motion:true, mirror:true, gw:""
+  }, JSON.parse(localStorage.getItem(LS)||"{}"));
+  const LEN = [
+    {label:"Concise",  tok:128, desc:"one-line correction"},
+    {label:"Balanced", tok:256, desc:"a sentence or two"},
+    {label:"Detailed", tok:512, desc:"full explanation"},
+    {label:"Maximal",  tok:1024,desc:"no cap"},
+  ];
+  function save(){ localStorage.setItem(LS, JSON.stringify(settings)); }
+
+  function applySettings(){
+    document.documentElement.style.setProperty('--accent', settings.accentA);
+    document.documentElement.style.setProperty('--accent2', settings.accentB);
+    document.body.classList.toggle('no-motion', !settings.motion);
+    document.body.classList.toggle('density-compact', settings.density==='compact');
+    // length slider
+    const r=$('lenRange'); r.value=settings.lenIdx;
+    r.style.setProperty('--p', (settings.lenIdx/3*100)+'%');
+    $('lenLabel').textContent = LEN[settings.lenIdx].label;
+    // conf slider
+    const cr=$('confRange'); cr.value=settings.conf;
+    cr.style.setProperty('--p', ((settings.conf-0.4)/(0.95-0.4)*100)+'%');
+    $('confLabel').textContent = Number(settings.conf).toFixed(2);
+    // segments
+    document.querySelectorAll('#prioSeg button').forEach(b=>b.classList.toggle('on',b.dataset.v===settings.prio));
+    document.querySelectorAll('#densSeg button').forEach(b=>b.classList.toggle('on',b.dataset.v===settings.density));
+    // swatches
+    document.querySelectorAll('#swatches .sw').forEach(s=>s.classList.toggle('on',s.dataset.a===settings.accentA));
+    $('motionTgl').checked=settings.motion; $('mirrorTgl').checked=settings.mirror;
+    $('gwInput').value=settings.gw;
+    $('cam').style.transform = settings.mirror ? 'scaleX(-1)' : 'none';
+  }
+
+  // ---------- drawer ----------
+  const drawer=$('drawer'), scrim=$('scrim');
+  const openD=()=>{drawer.classList.add('on');scrim.classList.add('on');};
+  const closeD=()=>{drawer.classList.remove('on');scrim.classList.remove('on');};
+  $('openSettings').onclick=openD; $('closeSettings').onclick=closeD; scrim.onclick=closeD;
+
+  $('lenRange').oninput=e=>{settings.lenIdx=+e.target.value;applySettings();save();};
+  $('confRange').oninput=e=>{settings.conf=+e.target.value;applySettings();save();};
+  document.querySelectorAll('#prioSeg button').forEach(b=>b.onclick=()=>{settings.prio=b.dataset.v;applySettings();save();});
+  document.querySelectorAll('#densSeg button').forEach(b=>b.onclick=()=>{settings.density=b.dataset.v;applySettings();save();});
+  document.querySelectorAll('#swatches .sw').forEach(s=>s.onclick=()=>{settings.accentA=s.dataset.a;settings.accentB=s.dataset.b;applySettings();save();});
+  $('motionTgl').onchange=e=>{settings.motion=e.target.checked;applySettings();save();};
+  $('mirrorTgl').onchange=e=>{settings.mirror=e.target.checked;applySettings();save();};
+  $('gwInput').onchange=e=>{settings.gw=e.target.value.trim();save();};
+
+  // ---------- routing landing <-> stage ----------
+  const landing=$('landing'), stage=$('stage');
+  let mode="audio", session=null;
+  document.querySelectorAll('.mode').forEach(card=>{
+    card.onclick=()=>enterStage(card.dataset.mode);
+  });
+  $('back').onclick=()=>{ stopSession(); stage.classList.remove('on'); landing.style.display=''; };
+
+  function enterStage(m){
+    mode=m;
+    landing.style.display='none';
+    stage.classList.add('on');
+    const isVid = m==='video';
+    $('stageTitle').textContent = isVid ? 'Video Duplex' : 'Audio Duplex';
+    $('stagePillTxt').textContent = isVid ? 'Vision + Voice' : 'Voice';
+    $('stagePill').style.color = isVid ? 'var(--accent2)' : 'var(--talker)';
+    $('caption').textContent = 'Press the mic to start a live session.';
+    $('vizState').textContent='Standing by';
+    $('cam').style.display='none';
+    resizeViz();
+  }
+
+  // ---------- connection status ----------
+  function setConn(state, txt){
+    const map={idle:'var(--faint)',live:'var(--ok)',connecting:'var(--warn)',sim:'var(--accent)'};
+    $('connDot').style.color=map[state]||'var(--faint)';
+    $('connTxt').textContent=txt;
+  }
+
+  // ---------- telemetry log ----------
+  const elLog=$('log');
+  function logRow(cls,html){
+    const d=document.createElement('div'); d.className='row';
+    const t=new Date().toLocaleTimeString([], {hour12:false});
+    d.innerHTML=`<span class="t">${t}</span><span class="m ${cls}">${html}</span>`;
+    elLog.appendChild(d);
+    while(elLog.childElementCount>80) elLog.removeChild(elLog.firstChild);
+    elLog.scrollTop=elLog.scrollHeight;
+  }
+  const esc=s=>(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  function setAct(action,text){
+    const chip=$('actChip'); chip.className='chip '+(action||'NOOP'); chip.textContent=action||'NOOP';
+    $('actText').textContent=text||'';
+  }
+  function setWho(who){
+    const el=$('whoTalking');
+    if(who==='ai'){el.textContent='● AI speaking';el.style.color='var(--talker)';}
+    else if(who==='user'){el.textContent='● You speaking';el.style.color='var(--accent2)';}
+    else if(who==='cut'){el.textContent='⚡ AI cut in';el.style.color='var(--bad)';}
+    else {el.textContent='— idle —';el.style.color='var(--muted)';}
+  }
+
+  // handle a message in the gateway/observer protocol (mirrors tt-status-panel.js)
+  function handleMsg(msg){
+    if(msg.type==='response.output.delta' && msg.kind==='text'){
+      const m=msg.metrics||{}; const lat=m.cost_all_ms||m.cost_llm_ms;
+      if(lat){ $('lTalker').textContent=Math.round(lat)+'ms'; }
+      if(msg.text){ $('sTalker').textContent=msg.text.slice(0,40); $('caption').textContent=msg.text;
+        setWho('ai'); logRow('c-small','🗣️ Talker: '+esc(msg.text)); }
+    } else if(msg.type==='tt.status'){
+      if(msg.stage==='thinker'){
+        $('lThink').textContent=(msg.latency_ms??'?')+'ms';
+        setAct(msg.action, msg.text?('“'+msg.text+'”'):'');
+        let s=`🧠 Thinker [<b>${esc(msg.action)}</b>] ${msg.latency_ms}ms`;
+        if(msg.text) s+=` → “${esc(msg.text)}”`;
+        logRow('c-big',s);
+        if(msg.searches&&msg.searches.length) logRow('c-search','🔎 web search: '+msg.searches.map(esc).join('  /  '));
+        if(msg.input) logRow('c-input','↳ context → Thinker: '+esc((''+msg.input).replace(/\n/g,' | ').slice(-160)));
+        if(msg.reason) logRow('c-reason','   reason: '+esc(msg.reason));
+      } else if(msg.stage==='asr'){
+        $('sThink').textContent='heard you'; setWho('user');
+        logRow('c-asr','🎤 you (ASR): '+esc(msg.text));
+      } else if(msg.stage==='fired'){
+        setWho(msg.action==='CUT'?'cut':'ai');
+        if(msg.text) $('caption').textContent=msg.text;
+        logRow('c-fired',`⚡ injected & spoken (${esc(msg.action)}): “${esc(msg.text)}”`);
+      }
+    }
+  }
+
+  // ---------- live gateway attach (best-effort) ----------
+  let ws=null, attachTimer=null;
+  async function tryAttach(base){
+    try{
+      const root=base.replace(/\/$/,'');
+      const r=await fetch(root+'/observer/sessions',{cache:'no-store'});
+      const d=await r.json(); const list=d.sessions||[];
+      const sid=list.length?list[list.length-1]:null;
+      if(!sid) return false;
+      const u=new URL(root); const proto=u.protocol==='https:'?'wss':'ws';
+      ws=new WebSocket(`${proto}://${u.host}/observer/${sid}`);
+      ws.onopen=()=>{ setConn('live','Live · '+sid.slice(0,8)); $('srcPill').textContent='live gateway'; $('srcPill').style.color='var(--ok)'; };
+      ws.onmessage=ev=>{ try{handleMsg(JSON.parse(ev.data));}catch(e){} };
+      ws.onclose=()=>{ ws=null; if(session) startSim(); };
+      ws.onerror=()=>{};
+      return true;
+    }catch(e){ return false; }
+  }
+
+  // ---------- demo simulation (so the stage is always alive) ----------
+  let simTimer=null;
+  const SCRIPT=[
+    {d:600, who:'user', cap:'So the Eiffel Tower was finished in 1887, right?'},
+    {d:500, asr:'So the Eiffel Tower was finished in 1887, right?'},
+    {d:700, talker:'Right, the Eiffel Tower…', tlat:180},
+    {d:650, think:{action:'INJECT', lat:740, text:'It opened in 1889, not 1887.', searches:['Eiffel Tower completion date'],
+            input:'user: …finished in 1887? | talker draft: Right, the Eiffel Tower…', reason:'date is wrong; quick factual fix'}},
+    {d:500, fired:{action:'INJECT', text:'Small correction — it was completed in 1889.'}},
+    {d:1100, who:'user', cap:'Got it. And it’s made of pure iron?'},
+    {d:400, asr:'Got it. And it’s made of pure iron?'},
+    {d:700, talker:'Yeah, pure iron basically…', tlat:160},
+    {d:600, think:{action:'CUT', lat:520, text:'Actually it’s wrought iron, not pure iron.', searches:['Eiffel Tower material wrought iron'],
+            input:'user: pure iron? | talker draft: Yeah, pure iron basically…', reason:'about to assert a falsehood with confidence 0.9 ≥ threshold'}},
+    {d:450, fired:{action:'CUT', text:'Quick cut-in — it’s wrought iron, not pure iron.'}},
+    {d:1300, who:'user', cap:'Nice. Tell me one cool fact.'},
+    {d:400, asr:'Nice. Tell me one cool fact.'},
+    {d:800, talker:'It grows ~15cm taller in summer heat.', tlat:170},
+    {d:700, think:{action:'NOOP', lat:300, text:'', reason:'draft is correct — stay quiet'}},
+  ];
+  function startSim(){
+    setConn('sim','Demo simulation');
+    $('srcPill').textContent='simulated'; $('srcPill').style.color='var(--muted)';
+    let i=0;
+    const tick=()=>{
+      if(!session) return;
+      const ev=SCRIPT[i%SCRIPT.length]; i++;
+      if(ev.who){ setWho(ev.who); if(ev.cap) $('caption').textContent=ev.cap; if(ev.who==='user') $('vizState').textContent='Listening'; }
+      if(ev.asr) handleMsg({type:'tt.status',stage:'asr',text:ev.asr});
+      if(ev.talker){ $('vizState').textContent='Talker speaking';
+        handleMsg({type:'response.output.delta',kind:'text',text:ev.talker,metrics:{cost_all_ms:ev.tlat}}); }
+      if(ev.think) handleMsg(Object.assign({type:'tt.status',stage:'thinker',latency_ms:ev.think.lat},ev.think));
+      if(ev.fired){ $('vizState').textContent = ev.fired.action==='CUT'?'AI cutting in':'AI injecting';
+        handleMsg({type:'tt.status',stage:'fired',action:ev.fired.action,text:ev.fired.text}); }
+      simTimer=setTimeout(tick, ev.d);
+    };
+    tick();
+  }
+
+  // ---------- audio visualizer (canvas) ----------
+  const cv=$('viz'), ctx=cv.getContext('2d');
+  let raf=null, audioCtx=null, analyser=null, freq=null, micStream=null, camStream=null, level=0;
+  function resizeViz(){ const c=cv.parentElement.getBoundingClientRect(); const dpr=Math.min(2,devicePixelRatio||1);
+    cv.width=c.width*dpr; cv.height=c.height*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); }
+  window.addEventListener('resize',()=>{ if(stage.classList.contains('on')) resizeViz(); });
+
+  function draw(){
+    raf=requestAnimationFrame(draw);
+    const w=cv.clientWidth, h=cv.clientHeight; ctx.clearRect(0,0,w,h);
+    let amp=0.08;
+    if(analyser){ analyser.getByteFrequencyData(freq);
+      let s=0; for(let i=0;i<freq.length;i++) s+=freq[i]; amp=Math.max(0.06,(s/freq.length)/255);
+    } else if(!settings.motion){ amp=0.12; }
+    level += (amp-level)*0.18;
+    const cx=w/2, cy=h/2, base=Math.min(w,h)*0.16;
+    const t=performance.now()/1000;
+    // glow core
+    const g=ctx.createRadialGradient(cx,cy,0,cx,cy,base*(2.4+level*3));
+    g.addColorStop(0, hex(settings.accentA,0.35+level*0.5));
+    g.addColorStop(.5, hex(settings.accentB,0.10));
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,base*(2.4+level*3),0,7); ctx.fill();
+    // concentric reactive rings
+    for(let r=0;r<3;r++){
+      const rings=72; ctx.beginPath();
+      for(let i=0;i<=rings;i++){
+        const a=i/rings*Math.PI*2;
+        const wob=Math.sin(a*(3+r)+t*(1.2+r*0.5))*(6+level*42*(1+r*0.4));
+        const rad=base*(1+r*0.42)+wob;
+        const x=cx+Math.cos(a)*rad, y=cy+Math.sin(a)*rad;
+        i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle=hex(r%2?settings.accentB:settings.accentA, 0.5-r*0.13);
+      ctx.lineWidth=2-r*0.4; ctx.stroke();
+    }
+  }
+  function hex(h,a){ const n=parseInt(h.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
+
+  // ---------- session lifecycle ----------
+  async function startSession(){
+    session={mode};
+    $('mic').classList.add('live');
+    $('vizState').textContent='Connecting';
+    resizeViz(); if(!raf) draw();
+    // media
+    try{
+      if(mode==='video'){
+        camStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+        const cam=$('cam'); cam.srcObject=camStream; cam.style.display='block';
+        micStream=camStream;
+      } else {
+        micStream=await navigator.mediaDevices.getUserMedia({audio:true});
+      }
+      audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+      const src=audioCtx.createMediaStreamSource(micStream);
+      analyser=audioCtx.createAnalyser(); analyser.fftSize=128; freq=new Uint8Array(analyser.frequencyBinCount);
+      src.connect(analyser);
+    }catch(e){ /* no mic/cam permission — visualizer still animates */ }
+    $('vizState').textContent='Live';
+    $('caption').textContent= mode==='video' ? 'Watching & listening…' : 'Listening…';
+    // attach to live gateway if configured, else simulate
+    const gw=settings.gw||'';
+    if(gw){ setConn('connecting','Attaching…'); const ok=await tryAttach(gw); if(!ok){ logRow('c-reason','No live session at gateway — running demo simulation.'); startSim(); } }
+    else { startSim(); }
+  }
+  function stopSession(){
+    session=null;
+    $('mic').classList.remove('live');
+    if(simTimer){clearTimeout(simTimer);simTimer=null;}
+    if(ws){try{ws.close();}catch(e){} ws=null;}
+    if(raf){cancelAnimationFrame(raf);raf=null;}
+    if(audioCtx){try{audioCtx.close();}catch(e){} audioCtx=null; analyser=null;}
+    [micStream,camStream].forEach(s=>{ if(s) s.getTracks().forEach(t=>t.stop()); });
+    micStream=camStream=null;
+    const cam=$('cam'); cam.srcObject=null; cam.style.display='none';
+    setConn('idle','Idle'); setWho(null);
+    $('vizState').textContent='Standing by'; $('caption').textContent='Press the mic to start a live session.';
+    ctx.clearRect(0,0,cv.clientWidth,cv.clientHeight);
+  }
+  $('mic').onclick=()=>{ session?stopSession():startSession(); };
+
+  // ---------- boot ----------
+  applySettings();
+  setConn('idle','Idle');
+})();
+</script>
+</body>
+</html>

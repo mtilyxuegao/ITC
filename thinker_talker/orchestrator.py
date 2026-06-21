@@ -38,6 +38,7 @@ class Orchestrator:
         self._last_thought_ctx = None  # 去重:上下文没变就不重复打扰大模型
         self._audio_buf = bytearray()  # 用户上行音频(float32 16k),供 ASR
         self._last_user_text = ""
+        self._last_injected = ""  # 去重:同一轮里不重复注入相同/相近的答案(避免大模型反复念同一句)
         self._ai_audio_guard_until = 0.0  # AI 说话 + 尾窗:此刻之前丢弃上行音频(防自听)
         self._asr_enabled = cfg.asr_enabled and ((cfg.asr_provider == "local") or bool(cfg.asr_api_key))
 
@@ -67,6 +68,15 @@ class Orchestrator:
                 or self.state.talker_state is not TalkerState.LISTENING
                 or time.time() < self._ai_audio_guard_until)
 
+    def _is_repeat_injection(self, text: str) -> bool:
+        """是否与上一次注入的内容几乎相同(防大模型每个 tick 反复念同一句答案)。"""
+        import difflib
+        a = "".join((text or "").split())
+        b = "".join((self._last_injected or "").split())
+        if not a or not b:
+            return False
+        return a == b or a in b or b in a or difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
+
     # ---------- 打断:人 → AI ----------
     async def on_user_barge(self) -> None:
         """媒体层/observer 在检测到用户开口(force_listen)时调用。"""
@@ -75,6 +85,7 @@ class Orchestrator:
         await self.thinker.abort()                      # 源头取消在飞的 Thinker
         self.arbiter.release()
         self.state.talker_state = TalkerState.LISTENING
+        self._last_injected = ""                         # 新一轮用户输入:允许再次注入
         logger.info("user barge-in -> epoch=%d, thinker aborted", new_epoch)
 
     # ---------- 消费 Talker 输出 ----------
@@ -178,6 +189,9 @@ class Orchestrator:
         if d.action is Action.INJECT:
             if not d.text:
                 return
+            if self._is_repeat_injection(d.text):  # 已经注入过这条答案 -> 不重复念
+                logger.info("inject suppressed (repeat): %r", d.text[:40])
+                return
             if self.cfg.inject_wait_for_gap and not self.arbiter.can_inject():
                 logger.info("inject deferred (floor=%s)", self.state.floor.value)
                 return
@@ -187,11 +201,15 @@ class Orchestrator:
             self._tlog("→小模型说出(INJECT)", d.text)
             await self._send_status(stage="fired", action="INJECT", text=d.text)
             self.state.add_turn("talker", d.text)
+            self._last_injected = d.text
             self.arbiter.release()
             return
 
         if d.action is Action.CUT:
             if not self._cut_allowed(d):
+                return
+            if self._is_repeat_injection(d.text):  # 不重复打断说同一句
+                logger.info("cut suppressed (repeat): %r", d.text[:40])
                 return
             self.arbiter.take(Floor.THINKER)
             self._mark_ai_speaking()  # CUT 也是 AI 出声,门控 ASR 防回采
@@ -201,6 +219,7 @@ class Orchestrator:
             self._tlog("→小模型打断说出(CUT)", d.text)
             await self._send_status(stage="fired", action="CUT", text=d.text)
             self.state.add_turn("talker", d.text)
+            self._last_injected = d.text
             self.arbiter.release()
 
     def _cut_allowed(self, d: Directive) -> bool:
@@ -255,6 +274,7 @@ class Orchestrator:
                     self._audio_buf.clear()
                     continue
                 self._last_user_text = text
+                self._last_injected = ""  # 新用户输入 -> 允许针对新问题再次注入
                 self.state.add_turn("user", text)
                 self._tlog("用户(ASR)", text)
                 await self._send_status(stage="asr", text=text)

@@ -35,6 +35,8 @@ Output format (output ONLY JSON, no extra text, no markdown, no reasoning):
 Hard rules:
 - text must be very short, spoken-style, <= 15 words, one sentence (it will be spoken aloud).
 - Real-time/factual: must web_search first, then INJECT the real answer; never just wait.
+- Do NOT repeat yourself: if you already injected the answer, or the latest Talker draft already
+  states the correct fact, NOOP. Inject a given answer only once.
 - Visual: always NOOP.
 - Stop intent ("stop / quiet / enough"): immediately CUT (confidence=0.95).
 """
@@ -53,8 +55,9 @@ TALKER_SYSTEM_PROMPT = (
     "you are unsure of. "
     "2) For time-sensitive info (stock prices, exchange rates, weather, news, today's date, latest "
     "data, etc.) you have no live internet access — do not state specific values. "
-    "3) For such questions, after restating, just stall in one sentence (e.g. 'let me check the "
-    "latest') and leave the actual answer for later; don't rush to a conclusion. "
+    "3) For such questions, after restating, stall in ONE short sentence (e.g. 'let me check the "
+    "latest') and then WAIT QUIETLY for the answer — do NOT keep repeating that you are looking it "
+    "up, and do not invent the value yourself. "
     "4) Keep replies short, spoken-style, one or two sentences."
 )
 
