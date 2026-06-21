@@ -132,9 +132,35 @@ class GatewayObserver:
             self._ssl = ssl._create_unverified_context() if insecure else ssl.create_default_context()
         self._ws = None
         self._send_lock = asyncio.Lock()
+        self._watch_task = None
 
     def _ws_url(self, path: str) -> str:
         return self.base.replace("http", "ws", 1) + path
+
+    async def _watch_stale(self) -> None:
+        """看门狗:轮询 /observer/sessions。若当前会话消失(用户刷新/结束)或出现更新的会话,
+        关掉当前 ws —— 让 events() 结束、上层重连到最新会话(修复'刷新后 ASR/编排不再工作')。"""
+        import aiohttp
+        try:
+            async with aiohttp.ClientSession() as s:
+                while self._ws is not None:
+                    await asyncio.sleep(3.0)
+                    try:
+                        async with s.get(self.base + "/observer/sessions", ssl=self._ssl) as r:
+                            sessions = (await r.json()).get("sessions") or []
+                    except Exception:
+                        continue
+                    latest = sessions[-1] if sessions else None
+                    if (self.session_id not in sessions) or (latest and latest != self.session_id):
+                        logger.info("observer: session %s stale (latest=%s) -> reconnect", self.session_id, latest)
+                        try:
+                            if self._ws is not None:
+                                await self._ws.close()
+                        except Exception:
+                            pass
+                        return
+        except asyncio.CancelledError:
+            pass
 
     async def discover_session(self, timeout_s: float = 30.0) -> Optional[str]:
         import aiohttp
@@ -161,8 +187,12 @@ class GatewayObserver:
         self._ws = await websockets.connect(self._ws_url(f"/observer/{self.session_id}"),
                                              ssl=self._ssl, max_size=None)
         logger.info("observing session %s", self.session_id)
+        self._watch_task = asyncio.create_task(self._watch_stale())
 
     async def close(self) -> None:
+        if self._watch_task is not None:
+            self._watch_task.cancel()
+            self._watch_task = None
         if self._ws is not None:
             await self._ws.close()
             self._ws = None
