@@ -1,33 +1,32 @@
-/* Talker–Thinker 实时状态面板(旁路,不影响原页面逻辑)。
- * 订阅 gateway 的 /observer/{session_id},显示:
- *   🗣️ 小模型说了什么 + 延迟   🧠 大模型每步决策 + 输入(证明已传入)+ 延迟
- *   🔎 联网搜索   ⚡ 注入/打断
- * 数据来源:worker 下行的 text 增量(经 hub 镜像)+ 编排层发的 tt.status。
+/* Latent Lab — Talker–Thinker live status panel (English).
+ * Subscribes to gateway /observer/{session_id} and shows:
+ *   🗣️ Talker drafts + latency   🧠 Thinker decision + context + latency
+ *   🔎 web search   ⚡ inject / cut   🎤 your speech (ASR)
  */
 (function () {
   const panel = document.getElementById('statusPanel');
   if (!panel) return;
 
   panel.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font:12px/1.5 system-ui,'PingFang SC',sans-serif">
-      <b style="color:#5b9dff">🧠 双脑状态</b>
-      <span id="ttConn" style="color:#999">未连接</span>
-      <button id="ttToggle" style="margin-left:auto;border:1px solid #ccc;background:#f5f5f5;border-radius:6px;cursor:pointer;padding:1px 8px">收起</button>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font:12px/1.5 system-ui,-apple-system,sans-serif">
+      <b style="background:linear-gradient(90deg,#7c8cff,#54e0c7);-webkit-background-clip:text;background-clip:text;color:transparent;font-weight:800">🧠 Thinker</b>
+      <span id="ttConn" style="color:#8b94a7">Disconnected</span>
+      <button id="ttToggle" style="margin-left:auto;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#cdd6e6;border-radius:6px;cursor:pointer;padding:1px 8px">Collapse</button>
       <div style="flex-basis:100%;height:0"></div>
-      <span>🗣️小模型:<b id="ttSmall">—</b></span>
-      <span>🧠大模型:<b id="ttBig">—</b></span>
-      <span>动作:<b id="ttAct">—</b></span>
-      <span style="color:#999">会话:<code id="ttSid">—</code></span>
+      <span style="color:#9aa4b2">🗣️ Talker: <b id="ttSmall" style="color:#5fe0d0">—</b></span>
+      <span style="color:#9aa4b2">🧠 Thinker: <b id="ttBig" style="color:#9cc3ff">—</b></span>
+      <span style="color:#9aa4b2">Action: <b id="ttAct" style="color:#fff">—</b></span>
+      <span style="color:#6b7488">Session: <code id="ttSid">—</code></span>
     </div>
-    <div id="ttLog" style="margin-top:8px;max-height:170px;overflow:auto;font:12px/1.55 ui-monospace,Menlo,monospace;background:#0f1115;color:#d6def0;border-radius:8px;padding:8px"></div>`;
+    <div id="ttLog" style="margin-top:8px;max-height:180px;overflow:auto;font:12px/1.55 ui-monospace,Menlo,monospace;background:rgba(8,10,16,.6);color:#d6def0;border-radius:9px;padding:8px"></div>`;
 
   const $ = (id) => document.getElementById(id);
   $('ttToggle').onclick = () => {
     const log = $('ttLog');
     const hidden = log.style.display === 'none';
     log.style.display = hidden ? 'block' : 'none';
-    $('ttToggle').textContent = hidden ? '收起' : '展开';
-    panel.style.width = hidden ? '340px' : '210px';
+    $('ttToggle').textContent = hidden ? 'Collapse' : 'Expand';
+    panel.style.width = hidden ? '360px' : '220px';
   };
   const elLog = $('ttLog');
   const esc = (s) => (s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -49,21 +48,21 @@
       const m = msg.metrics || {};
       const lat = m.cost_all_ms || m.cost_llm_ms;
       if (lat) $('ttSmall').textContent = Math.round(lat) + 'ms';
-      if (msg.text) addRow('small', `🗣️ 小模型: ${esc(msg.text)}`);
+      if (msg.text) addRow('small', `🗣️ Talker: ${esc(msg.text)}`);
     } else if (msg.type === 'tt.status') {
       if (msg.stage === 'thinker') {
         $('ttBig').textContent = (msg.latency_ms ?? '?') + 'ms';
         $('ttAct').textContent = msg.action || '—';
-        let s = `🧠 大模型 [<b>${esc(msg.action)}</b>] ${msg.latency_ms}ms`;
+        let s = `🧠 Thinker [<b>${esc(msg.action)}</b>] ${msg.latency_ms}ms`;
         if (msg.text) s += ` → "${esc(msg.text)}"`;
         addRow('big', s);
-        if (msg.searches && msg.searches.length) addRow('search', `🔎 联网搜索: ${msg.searches.map(esc).join('  /  ')}`);
-        addRow('input', `↳ 实际传给大模型的输入: ${esc((msg.input || '').replace(/\n/g, ' | ').slice(-180))}`);
-        if (msg.reason) addRow('reason', `   理由: ${esc(msg.reason)}`);
+        if (msg.searches && msg.searches.length) addRow('search', `🔎 Web search: ${msg.searches.map(esc).join('  /  ')}`);
+        addRow('input', `↳ Context → Thinker: ${esc((msg.input || '').replace(/\n/g, ' | ').slice(-180))}`);
+        if (msg.reason) addRow('reason', `   Reason: ${esc(msg.reason)}`);
       } else if (msg.stage === 'asr') {
-        addRow('search', `🎤 你说(ASR): ${esc(msg.text)}`);
+        addRow('search', `🎤 You (ASR): ${esc(msg.text)}`);
       } else if (msg.stage === 'fired') {
-        addRow('fired', `⚡ 已注入并让小模型说出(${esc(msg.action)}): "${esc(msg.text)}"`);
+        addRow('fired', `⚡ Injected & spoken (${esc(msg.action)}): "${esc(msg.text)}"`);
       }
     }
   }
@@ -83,9 +82,9 @@
     return new Promise((resolve) => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${proto}://${location.host}/observer/${sid}`);
-      ws.onopen = () => { $('ttConn').textContent = '● 已连接'; $('ttConn').style.color = '#56d364'; };
+      ws.onopen = () => { $('ttConn').textContent = '● Connected'; $('ttConn').style.color = '#56d364'; };
       ws.onmessage = (ev) => { try { handle(JSON.parse(ev.data)); } catch (e) {} };
-      ws.onclose = () => { $('ttConn').textContent = '○ 断开'; $('ttConn').style.color = '#999'; resolve(); };
+      ws.onclose = () => { $('ttConn').textContent = '○ Disconnected'; $('ttConn').style.color = '#8b94a7'; resolve(); };
       ws.onerror = () => {};
     });
   }

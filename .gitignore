@@ -18,3 +18,11 @@ venv/
 conversation.log
 live_demo.log
 qwen_dl.log
+
+# scratch + large demo media (never commit — exceeds GitHub limits)
+.omni_work/
+final/
+.DS_Store
+*.mp4
+*.mov
+*.m4a
